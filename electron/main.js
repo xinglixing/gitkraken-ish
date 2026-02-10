@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const os = require('os');
@@ -87,6 +87,29 @@ function createWindow() {
   // Set application menu to null to completely remove menu bar
   // Menu can still be accessed via Alt+H on Windows/Linux if needed
   mainWindow.setMenuBarVisibility(false);
+
+  // Intercept external navigation and open in default browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Check if URL is external (http/https)
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  // Also handle navigation within the same window
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Allow navigation to localhost (dev server) and file:// (production)
+    if (url.startsWith('http://localhost') || url.startsWith('file://')) {
+      return;
+    }
+    // Block external navigation and open in browser instead
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
 }
 
 app.whenReady().then(() => {
@@ -105,6 +128,23 @@ app.whenReady().then(() => {
     console.log('[Electron] Dialog completed, canceled:', result.canceled);
     if (result.canceled) return null;
     return result.filePaths[0];
+  });
+
+  // IPC for opening external URLs in default browser
+  ipcMain.handle('shell:openExternal', async (_event, url) => {
+    // Validate URL to prevent opening arbitrary protocols
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        await shell.openExternal(url);
+        return true;
+      }
+      console.warn('[Security] Blocked non-http(s) URL:', url);
+      return false;
+    } catch (e) {
+      console.error('[Error] Invalid URL:', url);
+      return false;
+    }
   });
 
   // IPC for platform info

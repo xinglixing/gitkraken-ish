@@ -18,6 +18,11 @@ interface ElectronAPI {
   openDirectory: () => Promise<string | null>;
 
   /**
+   * Open a URL in the default browser
+   */
+  openExternal: (url: string) => Promise<boolean>;
+
+  /**
    * Get platform and system information
    */
   getPlatformInfo: () => Promise<PlatformInfo>;

@@ -76,14 +76,20 @@ const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onSkip }) => {
         </form>
 
         <div className="mt-6 text-center">
-          <a 
-            href="https://github.com/settings/tokens" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-xs text-gk-blue hover:underline"
+          <button
+            type="button"
+            onClick={() => {
+              const electronAPI = (window as any).electronAPI;
+              if (electronAPI?.openExternal) {
+                electronAPI.openExternal('https://github.com/settings/tokens');
+              } else {
+                window.open('https://github.com/settings/tokens', '_blank');
+              }
+            }}
+            className="text-xs text-gk-blue hover:underline cursor-pointer bg-transparent border-none"
           >
             Generate a new token (Classic)
-          </a>
+          </button>
           <p className="text-[10px] text-gray-600 mt-2">
             Required scopes: <code>repo</code>, <code>read:user</code>
           </p>

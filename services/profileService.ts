@@ -29,6 +29,42 @@ export const saveProfile = (profile: Profile): void => {
 export const deleteProfile = (id: string): void => {
   const profiles = getProfiles().filter(p => p.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+
+  // Clear active profile if it was the deleted one
+  if (getActiveProfileId() === id) {
+    localStorage.removeItem(ACTIVE_PROFILE_KEY);
+  }
+};
+
+/**
+ * Clear all profile-related data from storage
+ * Call this when the last profile is deleted or user wants complete logout
+ */
+export const clearAllProfileData = (): void => {
+  // Clear profiles
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(ACTIVE_PROFILE_KEY);
+
+  // Clear workspaces (repo lists)
+  localStorage.removeItem('gk_workspaces');
+  localStorage.removeItem('gk_active_workspace');
+
+  // Clear repo type filter
+  localStorage.removeItem('gk_repo_type_filter');
+
+  // Clear any cached GitHub data
+  localStorage.removeItem('gk_github_repos_cache');
+  localStorage.removeItem('gk_github_user_cache');
+};
+
+/**
+ * Clear data specific to a single profile
+ * Call this when a profile is deleted but others remain
+ */
+export const clearProfileSpecificData = (profileId: string): void => {
+  // Clear any profile-specific cache keys
+  localStorage.removeItem(`gk_repos_${profileId}`);
+  localStorage.removeItem(`gk_cache_${profileId}`);
 };
 
 export const getActiveProfileId = (): string | null => {

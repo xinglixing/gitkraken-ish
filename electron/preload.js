@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
 
   /**
+   * Open a URL in the default browser
+   * @param {string} url - The URL to open
+   * @returns {Promise<boolean>} True if successful
+   */
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+
+  /**
    * Get platform information
    * @returns {Promise<PlatformInfo>} Platform and system information
    */

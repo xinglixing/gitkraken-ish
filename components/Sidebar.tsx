@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { Branch, ViewMode, WorkflowRun, Repository, PullRequest, Issue, Commit } from '../types';
 import { fetchWorkflowRuns, fetchPullRequests, fetchIssues } from '../services/githubService';
-import { gitCheckout, gitCherryPickMultiple, gitDeleteBranch, gitMerge } from '../services/localGitService';
+import { gitCheckout, gitCherryPickMultiple, gitDeleteBranch, gitMerge, getGitHubInfoFromLocal } from '../services/localGitService';
 import { detectPotentialConflicts } from '../services/conflictDetectionService';
 import AlertDialog from './AlertDialog';
 import ConfirmDialog from './ConfirmDialog';
@@ -45,6 +45,9 @@ interface SidebarProps {
   onCheckoutTag?: (tag: string) => void;
   onPushTag?: (tag: string) => void;
   onCopyTagName?: (tag: string) => void;
+  // Context menu coordination
+  contextMenuCloseTrigger?: number;
+  onContextMenuOpen?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -52,14 +55,24 @@ const Sidebar: React.FC<SidebarProps> = ({
     onSelectBranch, onCreateBranch, onSelectRun, onSelectPR, onSelectIssue,
     refreshTrigger = 0, onRefresh, onOpenMergeTool, tags = [], onDeleteTag, onCloneRepo,
     onRenameBranch, onSetUpstream, onResetBranch, onCompareBranch, onRebaseBranch, onAIExplainBranch, onAIGeneratePR,
-    onCheckoutTag, onPushTag, onCopyTagName
+    onCheckoutTag, onPushTag, onCopyTagName,
+    contextMenuCloseTrigger = 0, onContextMenuOpen
 }) => {
   const localBranches = branches.filter(b => !b.isRemote);
   const remoteBranches = branches.filter(b => b.isRemote);
   
   // Identify if we are in "Web/Cloud Mode" (GitHub API) vs "Local Mode" (File System)
   const isWebMode = repo && !repo.isLocal;
-  
+
+  // GitHub info extracted from local repo's remote (for showing Actions, PRs, Issues)
+  const [githubInfo, setGithubInfo] = useState<{ owner: string; repo: string } | null>(null);
+
+  // Check if we can show GitHub features (either web mode or local with GitHub remote)
+  const canShowGitHub = isWebMode || (repo?.isLocal && githubInfo !== null);
+  // Get effective owner/repo for GitHub API calls
+  const effectiveOwner = isWebMode ? repo?.owner?.login : githubInfo?.owner;
+  const effectiveRepoName = isWebMode ? repo?.name : githubInfo?.repo;
+
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [prs, setPrs] = useState<PullRequest[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -121,11 +134,28 @@ const Sidebar: React.FC<SidebarProps> = ({
     type: 'info'
   });
 
+  // Fetch GitHub info from local repo's remote and reset data when repo changes
+  useEffect(() => {
+      // Reset GitHub data when repo changes
+      setRuns([]);
+      setPrs([]);
+      setIssues([]);
+      setFetchError({});
+
+      if (repo?.isLocal) {
+          getGitHubInfoFromLocal(repo)
+              .then(info => setGithubInfo(info))
+              .catch(() => setGithubInfo(null));
+      } else {
+          setGithubInfo(null);
+      }
+  }, [repo]);
+
   const refreshActions = () => {
-      if (repo && repo.owner && token) {
+      if (effectiveOwner && effectiveRepoName && token) {
         setLoadingRuns(true);
         setFetchError(prev => ({ ...prev, runs: undefined }));
-        fetchWorkflowRuns(token, repo.owner.login, repo.name)
+        fetchWorkflowRuns(token, effectiveOwner, effectiveRepoName)
             .then(setRuns)
             .catch(err => {
               console.error('Failed to fetch workflow runs:', err);
@@ -136,10 +166,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const refreshPrs = () => {
-      if (repo && repo.owner && token) {
+      if (effectiveOwner && effectiveRepoName && token) {
         setLoadingPrs(true);
         setFetchError(prev => ({ ...prev, prs: undefined }));
-        fetchPullRequests(token, repo.owner.login, repo.name)
+        fetchPullRequests(token, effectiveOwner, effectiveRepoName)
             .then(setPrs)
             .catch(err => {
               console.error('Failed to fetch pull requests:', err);
@@ -150,10 +180,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const refreshIssues = () => {
-      if (repo && repo.owner && token) {
+      if (effectiveOwner && effectiveRepoName && token) {
         setLoadingIssues(true);
         setFetchError(prev => ({ ...prev, issues: undefined }));
-        fetchIssues(token, repo.owner.login, repo.name)
+        fetchIssues(token, effectiveOwner, effectiveRepoName)
             .then(setIssues)
             .catch(err => {
               console.error('Failed to fetch issues:', err);
@@ -164,9 +194,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Initial Fetch based on expanded state
-  useEffect(() => { if (expanded.actions) refreshActions(); }, [repo, token, expanded.actions]);
-  useEffect(() => { if (expanded.prs) refreshPrs(); }, [repo, token, expanded.prs]);
-  useEffect(() => { if (expanded.issues) refreshIssues(); }, [repo, token, expanded.issues]);
+  useEffect(() => { if (expanded.actions && canShowGitHub) refreshActions(); }, [repo, token, expanded.actions, githubInfo]);
+  useEffect(() => { if (expanded.prs && canShowGitHub) refreshPrs(); }, [repo, token, expanded.prs, githubInfo]);
+  useEffect(() => { if (expanded.issues && canShowGitHub) refreshIssues(); }, [repo, token, expanded.issues, githubInfo]);
 
   // Auto Refresh Trigger (throttled to at most once per 5 seconds)
   const lastRefreshRef = useRef(0);
@@ -254,6 +284,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       e.stopPropagation();
       // Show context menu for all local branches (including active for non-destructive actions)
       if (repo?.isLocal && !branch.isRemote) {
+          // Close any other context menus (e.g., commit context menu in App.tsx)
+          onContextMenuOpen?.();
+          setTagContextMenu(null);
           setContextMenu({
               x: e.clientX,
               y: e.clientY,
@@ -265,6 +298,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const handleTagContextMenu = (e: React.MouseEvent, tag: string) => {
       e.preventDefault();
       e.stopPropagation();
+      // Close any other context menus
+      onContextMenuOpen?.();
+      setContextMenu(null);
       setTagContextMenu({
           x: e.clientX,
           y: e.clientY,
@@ -438,6 +474,14 @@ const Sidebar: React.FC<SidebarProps> = ({
       }
   }, [contextMenu, tagContextMenu]);
 
+  // Close context menus when triggered by parent (e.g., when commit context menu opens)
+  useEffect(() => {
+      if (contextMenuCloseTrigger > 0) {
+          setContextMenu(null);
+          setTagContextMenu(null);
+      }
+  }, [contextMenuCloseTrigger]);
+
   // Keyboard navigation for context menus
   const handleMenuKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
       const menu = e.currentTarget;
@@ -601,8 +645,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        {/* GITHUB ACTIONS - Only for remote repos */}
-        {isWebMode && (
+        {/* GITHUB ACTIONS - For remote repos or local repos with GitHub remote */}
+        {canShowGitHub && token && (
           <>
             <SectionHeader
                 label="Actions"
@@ -647,8 +691,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           </>
         )}
 
-        {/* PULL REQUESTS - Only for remote repos */}
-        {isWebMode && (
+        {/* PULL REQUESTS - For remote repos or local repos with GitHub remote */}
+        {canShowGitHub && token && (
           <>
             <SectionHeader
                 label="Pull Requests"
@@ -708,8 +752,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           </>
         )}
 
-        {/* ISSUES - Only for remote repos */}
-        {isWebMode && (
+        {/* ISSUES - For remote repos or local repos with GitHub remote */}
+        {canShowGitHub && token && (
           <>
             <SectionHeader
                 label="Issues"

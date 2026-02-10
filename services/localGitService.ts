@@ -2075,6 +2075,46 @@ export const gitListRemotes = async (repo: Repository): Promise<{ remote: string
 };
 
 /**
+ * Parse GitHub owner and repo name from a remote URL
+ * Supports both HTTPS and SSH URL formats
+ */
+export const parseGitHubRemote = (url: string): { owner: string; repo: string } | null => {
+    // HTTPS: https://github.com/owner/repo.git or https://github.com/owner/repo
+    const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/.]+)/);
+    if (httpsMatch) {
+        return { owner: httpsMatch[1], repo: httpsMatch[2] };
+    }
+    // SSH: git@github.com:owner/repo.git or git@github.com:owner/repo
+    const sshMatch = url.match(/git@github\.com:([^/]+)\/([^/.]+)/);
+    if (sshMatch) {
+        return { owner: sshMatch[1], repo: sshMatch[2] };
+    }
+    return null;
+};
+
+/**
+ * Get GitHub owner/repo info from a local repository's origin remote
+ */
+export const getGitHubInfoFromLocal = async (repo: Repository): Promise<{ owner: string; repo: string } | null> => {
+    try {
+        const remotes = await gitListRemotes(repo);
+        const origin = remotes.find(r => r.remote === 'origin');
+        if (origin && origin.url) {
+            return parseGitHubRemote(origin.url);
+        }
+        // Try any remote that points to GitHub
+        for (const remote of remotes) {
+            const info = parseGitHubRemote(remote.url);
+            if (info) return info;
+        }
+        return null;
+    } catch (e) {
+        console.warn('Failed to get GitHub info from local repo:', e);
+        return null;
+    }
+};
+
+/**
  * Add a new remote to the repository
  */
 export const gitAddRemote = async (repo: Repository, remoteName: string, url: string): Promise<void> => {

@@ -51,13 +51,13 @@ import {
     gitListRemotes, fastBranchRefresh, hasMoreCommits as checkHasMoreCommits, gitClone,
     gitGetFileContent, gitStage, gitWriteFile, gitListFiles
 } from './services/localGitService';
-import { getCurrentBranch } from './services/localGitService';
+import { getCurrentBranch, isGitRepo } from './services/localGitService';
 import { hasConflicts, detectPotentialConflicts, generateMergePreview } from './services/conflictDetectionService';
 import { generateCommitSummary, generateChangelogEntry, explainBranchChanges, explainFileChanges, summarizeFileHistory } from './services/aiService';
 import { gitPushTag, gitSetUpstream, gitRebase, gitCompareBranches, gitDropCommit, gitResetBranch } from './services/localGitService';
 import { processGraphLayout } from './services/graphLayout';
 import { startWatching, stopWatching } from './services/gitWatcherService';
-import { getProfiles, getActiveProfileId, setActiveProfileId, createProfile, saveProfile, createLocalProfile, isDuplicateProfile } from './services/profileService';
+import { getProfiles, getActiveProfileId, setActiveProfileId, createProfile, saveProfile, createLocalProfile, isDuplicateProfile, clearAllProfileData } from './services/profileService';
 import { isElectron } from './utils/platform';
 import { formatDate } from './utils/dateUtils';
 import { useAutoFetch } from './hooks/useAutoFetch';
@@ -140,9 +140,23 @@ const HeaderCell = ({
 );
 
 const App: React.FC = () => {
-  const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
+  // Initialize active profile from localStorage to avoid showing LoginModal on reload
+  const [activeProfile, setActiveProfile] = useState<Profile | null>(() => {
+    try {
+      const profiles = getProfiles();
+      const activeId = getActiveProfileId();
+      if (activeId) {
+        const found = profiles.find(p => p.id === activeId);
+        if (found) return found;
+      }
+      return null;
+    } catch (e) {
+      console.warn('Failed to load saved profile:', e);
+      return null;
+    }
+  });
   const [skipLogin, setSkipLogin] = useState(false);
-  
+
   // SECURITY WARNING: AI config containing API keys is stored in localStorage.
   // For production, consider migrating to OS keychain (electron-keytar) or encrypted storage.
   // localStorage is accessible via DevTools and persists unencrypted on disk.
@@ -156,7 +170,22 @@ const App: React.FC = () => {
     }
   });
 
-  const [currentRepo, setCurrentRepo] = useState<Repository | null>(null);
+  // Initialize last opened repo from localStorage
+  const [currentRepo, setCurrentRepo] = useState<Repository | null>(() => {
+    try {
+      const saved = localStorage.getItem('gk_last_repo');
+      if (saved) {
+        const repo = JSON.parse(saved) as Repository;
+        // For local repos, we'll validate the path exists in a useEffect
+        // For now, just return the saved repo
+        return repo;
+      }
+      return null;
+    } catch (e) {
+      console.warn('Failed to load last repo:', e);
+      return null;
+    }
+  });
   const [commits, setCommits] = useState<Commit[]>([]);
   const [commitIdsRef] = useState(() => ({ current: new Set<string>() })); // Mutable ref for O(1) commit lookup
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -216,6 +245,8 @@ const App: React.FC = () => {
   const [remoteCount, setRemoteCount] = useState(-1);
 
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'commit' | 'wip', commit?: Commit } | null>(null);
+  // Trigger to close sidebar context menus when commit context menu opens
+  const [sidebarContextMenuCloseTrigger, setSidebarContextMenuCloseTrigger] = useState(0);
 
   const [hasUncommittedChanges, setHasUncommittedChanges] = useState(false);
 
@@ -464,15 +495,38 @@ const App: React.FC = () => {
       document.body.style.cursor = 'col-resize';
   };
 
-  // Initialize Profiles
+  // Note: Profile is now initialized in useState to avoid flash of LoginModal on reload
+
+  // Save current repo to localStorage when it changes
   useEffect(() => {
-    const profiles = getProfiles();
-    const activeId = getActiveProfileId();
-    if (activeId) {
-        const found = profiles.find(p => p.id === activeId);
-        if (found) setActiveProfile(found);
+    if (currentRepo) {
+      localStorage.setItem('gk_last_repo', JSON.stringify(currentRepo));
+    } else {
+      localStorage.removeItem('gk_last_repo');
     }
-  }, []);
+  }, [currentRepo]);
+
+  // Validate saved local repo path exists on startup
+  useEffect(() => {
+    const validateSavedRepo = async () => {
+      if (currentRepo?.isLocal && currentRepo.handle) {
+        try {
+          // Check if the path still exists and is a git repo
+          const isValid = await isGitRepo(currentRepo.handle);
+          if (!isValid) {
+            console.warn('Saved repo path no longer exists or is not a git repo:', currentRepo.handle);
+            setCurrentRepo(null);
+            localStorage.removeItem('gk_last_repo');
+          }
+        } catch (e) {
+          console.warn('Failed to validate saved repo:', e);
+          setCurrentRepo(null);
+          localStorage.removeItem('gk_last_repo');
+        }
+      }
+    };
+    validateSavedRepo();
+  }, []); // Only run on mount
 
   useEffect(() => {
     localStorage.setItem('gk_ai_config', JSON.stringify(aiConfig));
@@ -845,6 +899,8 @@ const App: React.FC = () => {
       setSkipLogin(false);
       // Clear undo state when logging out
       clearUndo();
+      // Clear all stored profile and account data
+      clearAllProfileData();
   };
 
   const handleSwitchProfile = (id: string) => {
@@ -1327,6 +1383,8 @@ const App: React.FC = () => {
 
   const handleCommitContextMenu = (e: React.MouseEvent, commit: Commit) => {
     e.preventDefault();
+    // Close any sidebar context menus (branch/tag)
+    setSidebarContextMenuCloseTrigger(prev => prev + 1);
     // Select if not already part of selection
     if (!selectedCommits.find(c => c.id === commit.id)) {
         setSelectedCommits([commit]);
@@ -1337,6 +1395,8 @@ const App: React.FC = () => {
 
   const handleWipContextMenu = (e: React.MouseEvent) => {
       e.preventDefault();
+      // Close any sidebar context menus (branch/tag)
+      setSidebarContextMenuCloseTrigger(prev => prev + 1);
       setContextMenu({ x: e.clientX, y: e.clientY, type: 'wip' });
   };
 
@@ -4031,6 +4091,9 @@ const App: React.FC = () => {
         onCheckoutTag={handleCheckoutTag}
         onPushTag={handlePushTag}
         onCopyTagName={handleCopyTagName}
+        // Context menu coordination
+        contextMenuCloseTrigger={sidebarContextMenuCloseTrigger}
+        onContextMenuOpen={() => setContextMenu(null)}
       />
       
       <div className="flex-1 flex flex-col min-w-0">

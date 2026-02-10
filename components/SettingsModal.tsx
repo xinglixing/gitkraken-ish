@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Check, Key, MessageSquare, User as UserIcon, Plus, Trash2, LogOut, Github, Shield, Cpu, Settings, Keyboard, Bug } from 'lucide-react';
 import { AIConfig, AIProvider, Profile, User, ShellPreference } from '../types';
-import { getProfiles, saveProfile, deleteProfile, setActiveProfileId, createProfile, isDuplicateProfile } from '../services/profileService';
+import { getProfiles, saveProfile, deleteProfile, setActiveProfileId, createProfile, isDuplicateProfile, clearAllProfileData, clearProfileSpecificData } from '../services/profileService';
 import { validateToken } from '../services/githubService';
 import { isDebugMode, setDebugMode } from '../services/debugService';
 import ConfirmDialog from './ConfirmDialog';
@@ -98,18 +98,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleDeleteProfile = async (id: string) => {
       const ok = await triggerConfirm({
           title: 'Delete Profile',
-          message: 'Are you sure you want to delete this profile? This action cannot be undone.',
+          message: 'Are you sure you want to delete this profile? This will remove the account and all associated cached data. This action cannot be undone.',
           type: 'danger',
           confirmText: 'Delete',
       });
       if (ok) {
+          // Clear profile-specific cached data first
+          clearProfileSpecificData(id);
+
+          // Delete the profile
           deleteProfile(id);
           const remaining = getProfiles();
           setProfiles(remaining);
-          if (activeProfile?.id === id && remaining.length > 0) {
-              onSwitchProfile(remaining[0].id);
-          } else if (remaining.length === 0) {
+
+          if (remaining.length === 0) {
+              // Last profile deleted - clear all account-related data
+              clearAllProfileData();
               onSwitchProfile('');
+          } else if (activeProfile?.id === id) {
+              // Switch to another profile
+              onSwitchProfile(remaining[0].id);
           }
       }
   };

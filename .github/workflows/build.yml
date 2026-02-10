@@ -15,6 +15,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -36,19 +37,19 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      # Linux: Install required dependencies for sharp and electron-builder BEFORE npm ci
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm libvips-dev
+
       - name: Install dependencies
         run: npm ci
 
       # Type check before building
       - name: TypeScript check
         run: npx tsc --noEmit
-
-      # Linux: Install required dependencies for electron-builder
-      - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm
 
       # Build the Vite app
       - name: Build Vite app

@@ -1,286 +1,108 @@
-# GitKraken-ish Desktop - Cross-Platform Git GUI
+# GitKraken-ish
 
-A GitKraken-inspired desktop application built with React, Electron, and isomorphic-git. Features AI-powered commit messages, interactive commit graphs, and support for both local and remote repositories.
+A powerful, cross-platform Git GUI with AI-powered commit messages. Built with React, Electron, and TypeScript.
 
-## 🎯 Features
+## Features
 
-- **Cross-Platform**: Works on Windows, macOS, and Linux
-- **Dual Mode**: Browser-based (File System Access API) and Electron (system path access)
-- **Interactive Commit Graph**: Visualize branches, merges, and commit history
-- **AI-Powered**: Generate commit messages with Gemini, OpenAI, Claude, or DeepSeek
-- **GitHub Integration**: View issues, PRs, and Actions
-- **Advanced Git Operations**: Cherry-pick, rebase, merge, stash, and more
+**Git Operations**
+- Visual commit graph with branch visualization
+- Commit, push, pull, fetch with progress tracking
+- Branch management (create, delete, rename, checkout)
+- Merge, rebase, and cherry-pick support
+- Interactive rebase with drag-and-drop
+- Stash management
+- Conflict resolution with built-in merge tool
 
-## 🖥️ Platform Support
+**AI Integration**
+- Generate commit messages automatically
+- Supports Gemini, OpenAI, Claude, and DeepSeek
+- Customizable commit styles (conventional, emoji, concise, detailed)
 
-### Windows
-- ✅ Full Electron support with native file dialogs
-- ✅ WSL integration for accessing Linux repositories
-- ✅ Proper CRLF line ending handling
-- ⚠️ Browser mode limited (requires HTTPS or localhost)
+**GitHub Integration**
+- Pull request management
+- Issue tracking
+- GitHub Actions workflow status
+- Create PRs directly from the app
 
-### macOS
-- ✅ Native title bar integration (hiddenInset style)
-- ✅ Full feature support in both modes
-- ✅ Code signing ready (manual setup required)
-- ✅ Optimize for Apple Silicon
+**Advanced Features**
+- Multi-profile support for work/personal accounts
+- Command palette (Ctrl/Cmd + P)
+- File history and blame view
+- Reflog viewer
+- Submodule and worktree management
+- Gitflow workflow support
+- Undo/redo for git operations
 
-### Linux
-- ✅ AppImage/Flatpak/Snap package support
-- ✅ Full Git and filesystem support
-- ✅ Theme detection (follows system GTK/Qt theme)
-- ⚠️ Some desktop environments may have title bar quirks
+## Installation
 
-## 🚀 Getting Started
+### Download
 
-### Prerequisites
+Download the latest release for your platform:
+- **Windows**: `.exe` installer
+- **macOS**: `.dmg` disk image
+- **Linux**: `.AppImage`, `.deb`, or `.rpm`
 
-- **Node.js** 18+ and npm
-- **Git** (for local repositories)
-- **Electron** (included as dev dependency)
+### Build from Source
 
-### Installation
-
-1. Clone the repository:
 ```bash
-git clone <your-repo-url>
-cd gitkraken-ish-desktop
-```
+# Clone the repository
+git clone https://github.com/xinglixing/gitkraken-ish.git
+cd gitkraken-ish
 
-2. Install dependencies:
-```bash
+# Install dependencies
 npm install
-```
 
-3. Set up AI provider (optional but recommended):
-```bash
-# Create .env.local file
-echo "GEMINI_API_KEY=your_api_key_here" > .env.local
-```
-
-### Development
-
-**⚡ Quick Start (Recommended):**
-```bash
+# Run in development mode
 npm run electron:dev
-```
-This launches the full-featured desktop app with all Git capabilities.
 
-**🌐 Browser Mode (Limited Features):**
-```bash
-npm run dev
-```
-For quick viewing or when Electron is unavailable.
-
-**📖 See [MODES.md](MODES.md) for detailed comparison of features in each mode.**
-
-### Building
-
-Build for production:
-```bash
-npm run build
-```
-
-Build platform-specific installers:
-```bash
+# Build for production
 npm run electron:build
 ```
 
-This will create:
-- **Windows**: `.exe` installer (NSIS)
-- **macOS**: `.dmg` disk image
-- **Linux**: `.AppImage` package
+## Quick Start
 
-## ⌨️ Keyboard Shortcuts
+1. Launch the app
+2. Click "Open Repository" and select a Git repository
+3. View your commit history in the graph
+4. Stage changes and commit with AI-generated messages
 
-Keyboard shortcuts are platform-aware:
+### AI Setup (Optional)
+
+1. Open Settings (gear icon)
+2. Select your AI provider
+3. Enter your API key
+4. Click "Save"
+
+## Keyboard Shortcuts
 
 | Action | Windows/Linux | macOS |
-|--------|--------------|-------|
+|--------|---------------|-------|
 | Command Palette | `Ctrl+P` | `Cmd+P` |
-| Save | `Ctrl+S` | `Cmd+S` |
-| Undo | `Ctrl+Z` | `Cmd+Z` |
-| Redo | `Ctrl+Y` | `Cmd+Shift+Z` |
-| Select All | `Ctrl+A` | `Cmd+A` |
-| Copy | `Ctrl+C` | `Cmd+C` |
-| Paste | `Ctrl+V` | `Cmd+V` |
-| Cut | `Ctrl+X` | `Cmd+X` |
-| Find | `Ctrl+F` | `Cmd+F` |
+| Commit | `Ctrl+Enter` | `Cmd+Enter` |
+| Push | `Ctrl+Shift+P` | `Cmd+Shift+P` |
+| Pull | `Ctrl+Shift+L` | `Cmd+Shift+L` |
+| New Branch | `Ctrl+B` | `Cmd+B` |
+| Stash | `Ctrl+Shift+S` | `Cmd+Shift+S` |
 
-## 🔧 Configuration
+## Requirements
 
-### Git Configuration
+- Windows 10+, macOS 10.15+, or Linux
+- Git installed and available in PATH
+- 4GB RAM recommended
 
-The app automatically configures Git settings based on your platform:
+## Tech Stack
 
-**Windows:**
-- `core.autocrlf = true` (CRLF ↔ LF conversion)
-- `core.symlinks = false` (limited symlink support)
-- `core.fileMode = false` (no file mode bits)
+- **Frontend**: React, TypeScript, Tailwind CSS
+- **Desktop**: Electron
+- **Git**: isomorphic-git + native Git CLI
+- **AI**: Gemini, OpenAI, Claude, DeepSeek APIs
 
-**macOS & Linux:**
-- `core.autocrlf = input` (CRLF → LF on commit only)
-- `core.symlinks = true` (full symlink support)
-- `core.fileMode = true` (file mode bits preserved)
+## License
 
-### AI Provider Setup
+MIT License - see [LICENSE](LICENSE) for details.
 
-Configure your preferred AI provider in Settings:
-
-1. Click the profile icon in top-right
-2. Select "Settings"
-3. Choose your provider (Gemini, OpenAI, Claude, DeepSeek)
-4. Enter your API key
-5. Optionally customize model and commit style
-
-## 🐛 Troubleshooting
-
-**Having issues? Check the comprehensive [Troubleshooting Guide](TROUBLESHOOTING.md)**
-
-### ⚡ Most Common Issue: "Branch creation requires full filesystem access"
-
-**Problem**: You're in **Browser Mode** which has limited Git features.
-
-**Quick Fix**:
-1. Stop browser mode: Press `Ctrl+C` in terminal
-2. Start Electron mode:
-   ```bash
-   npm run electron:dev
-   ```
-3. The toolbar will now show **"Electron"** in blue (instead of "Browser" in yellow)
-4. All Git operations will now work!
-
-**📖 Learn More**: See [MODES.md](MODES.md) for feature comparison and [TROUBLESHOOTING.md](TROUBLESHOOTING.md#branch-creation-issues) for detailed solutions.
-
-### Other Common Issues
-
-**GPU errors (Linux/WSL)?**
-- These are cosmetic errors, the app still works
-- See [Troubleshooting Guide](TROUBLESHOOTING.md#gpu-errors-linuxwsl) for fixes
-
-**Permission denied?**
-- Re-grant file permissions to repository
-- See [Troubleshooting Guide](TROUBLESHOOTING.md#permission-errors)
-
-### Windows
-
-**Issue**: Can't access local repositories in browser mode
-- **Solution**: Use Electron mode or run on localhost/HTTPS
-
-**Issue**: WSL path not accessible
-- **Solution**: Use `\\wsl$` path or open repository from within WSL
-
-**Issue**: Line ending conflicts
-- **Solution**: The app auto-configures `core.autocrlf`, but you can override with:
-```bash
-git config --global core.autocrlf true
-```
-
-### macOS
-
-**Issue**: "App can't be opened because it is from an unidentified developer"
-- **Solution**: Right-click app → Open, or run:
-```bash
-xattr -cr /path/to/app.app
-```
-
-**Issue**: Title bar looks wrong on older macOS versions
-- **Solution**: The app automatically falls back to default title bar
-
-### Linux
-
-**Issue**: Scrollbars look wrong
-- **Solution**: The app includes Firefox scrollbar styling. If still broken, install GTK themes.
-
-**Issue**: App won't start
-- **Solution**: Check dependencies:
-```bash
-# Ubuntu/Debian
-sudo apt install libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libappindicator3-1 libsecret-1-0
-
-# Fedora
-sudo dnf install gtk3 libnotify nss libXScrnSaver libXtst xdg-utils at-spi2-atk libappindicator-gtk3 libsecret
-```
-
-### Browser Mode Limitations
-
-- File handles don't persist across reloads (security restriction)
-- No system path access (limited to user-selected directories)
-- Some Git operations may fail due to sandbox restrictions
-
-## 🔐 Security
-
-**Important**: This is a development tool. For production use:
-
-1. Enable `contextIsolation` in Electron
-2. Create a preload script for secure IPC
-3. Enable `webSecurity` for CSP
-4. Use code signing for macOS/Windows
-
-See `electron/main.js` for TODOs on security hardening.
-
-## 📝 Development Notes
-
-### Project Structure
-
-```
-gitkraken-ish-desktop/
-├── components/          # React components
-│   ├── Sidebar.tsx     # Repository sidebar
-│   ├── CommitGraph.tsx # Commit visualization
-│   └── ...
-├── services/           # Business logic
-│   ├── localGitService.ts  # Git operations
-│   ├── githubService.ts   # GitHub API
-│   └── aiService.ts       # AI providers
-├── utils/              # Utilities
-│   ├── platform.ts    # Platform detection
-│   └── shortcuts.ts   # Keyboard shortcuts
-├── electron/           # Electron main process
-└── types.ts           # TypeScript definitions
-```
-
-### Adding Platform-Specific Code
-
-Use the platform utilities:
-
-```typescript
-import { isWindows, isMacOS, getPlatform } from './utils/platform';
-
-if (isWindows()) {
-  // Windows-specific code
-}
-
-if (isMacOS()) {
-  // macOS-specific code
-}
-
-switch (getPlatform()) {
-  case 'windows':
-    // ...
-}
-```
-
-## 🤝 Contributing
-
-Contributions welcome! Please ensure:
-
-1. Code works on all three platforms (Windows, macOS, Linux)
-2. Platform-specific code is properly gated
-3. Keyboard shortcuts respect platform conventions
-4. File paths use `path.join()` or platform utilities
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Inspired by [GitKraken](https://www.gitkraken.com/)
 - Built with [isomorphic-git](https://isomorphic-git.org/)
-- UI framework: [React](https://reactjs.org/) + [Tailwind CSS](https://tailwindcss.com/)
-- Desktop framework: [Electron](https://www.electronjs.org/)
-
----
-
-**Note**: This is a work-in-progress. Some features may be incomplete or buggy. Please report issues!
+- Icons by [Lucide](https://lucide.dev/)

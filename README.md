@@ -66,6 +66,37 @@ npm run electron:build
 3. View your commit history in the graph
 4. Stage changes and commit with AI-generated messages
 
+### GitHub Token Setup
+
+To use GitHub features (push/pull private repos, view PRs, Issues, Actions), you need a Personal Access Token:
+
+1. Go to [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens)
+2. Click **"Generate new token (classic)"**
+3. Select the required scopes (see below)
+4. Copy the token and paste it in the app's login screen
+
+#### Required Token Scopes
+
+| Scope | Purpose |
+|-------|---------|
+| `repo` | Full access to repositories (push, pull, PRs, issues) |
+| `read:user` | Read your GitHub profile info |
+| `workflow` | View GitHub Actions workflow status |
+
+**For public repositories only**, you can use `public_repo` instead of `repo` for more limited access.
+
+#### Fine-Grained Token (Alternative)
+
+If you prefer fine-grained tokens for better security:
+
+| Permission | Access Level |
+|------------|--------------|
+| **Contents** | Read and write |
+| **Pull requests** | Read and write |
+| **Issues** | Read |
+| **Actions** | Read |
+| **Metadata** | Read (required) |
+
 ### AI Setup (Optional)
 
 1. Open Settings (gear icon)

@@ -35,7 +35,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       # Linux: Install required dependencies for sharp and electron-builder BEFORE npm ci
       - name: Install Linux dependencies
@@ -45,7 +44,7 @@ jobs:
           sudo apt-get install -y libarchive-tools rpm libvips-dev
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       # Type check before building
       - name: TypeScript check

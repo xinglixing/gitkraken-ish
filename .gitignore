@@ -1,0 +1,117 @@
+# Dependencies
+node_modules/
+
+# Build outputs (compiled app, NOT build resources)
+dist/
+release/
+out/
+
+# Local environment files (may contain API keys, tokens)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.local
+
+# Credentials and secrets
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.secret
+credentials.json
+secrets.json
+**/credentials/
+**/secrets/
+.npmrc
+.yarnrc
+.yarnrc.yml
+
+# API keys and tokens (if stored in files)
+**/api-key*
+**/apikey*
+**/*token*.json
+**/*auth*.json
+
+# WSL and Windows system folders
+wsl$/
+wsl.localhost/
+/mnt/
+/c/
+/Users/
+
+# Editor and IDE files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist/
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+
+# Electron build outputs (installers, NOT build resources)
+*.dmg
+*.exe
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.tar.gz
+*.msi
+*.nsis
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# macOS code signing (if present)
+*.provisionprofile
+embedded.mobileprovision
+
+# Windows code signing
+*.pfx
+authenticode/
+
+# Local config overrides
+config.local.*
+settings.local.*
+
+DONOT READ/
+"DONOT READ"/

@@ -1241,6 +1241,20 @@ export const isGitRepo = async (repo: Repository): Promise<boolean> => {
     }
 };
 
+/**
+ * Check if a path is a valid git repository (by path string)
+ */
+export const isGitRepoPath = async (path: string): Promise<boolean> => {
+    if (!isNodeEnv) return false;
+    try {
+        const fs = require('fs');
+        await git.resolveRef({ fs, dir: path, ref: 'HEAD' });
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
 export const initGitRepo = async (repo: Repository) => {
     const { fs, dir } = getGitContext(repo);
     await git.init({ fs, dir, defaultBranch: 'main' });

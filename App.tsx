@@ -51,7 +51,7 @@ import {
     gitListRemotes, fastBranchRefresh, hasMoreCommits as checkHasMoreCommits, gitClone,
     gitGetFileContent, gitStage, gitWriteFile, gitListFiles
 } from './services/localGitService';
-import { getCurrentBranch, isGitRepo } from './services/localGitService';
+import { getCurrentBranch, isGitRepoPath } from './services/localGitService';
 import { hasConflicts, detectPotentialConflicts, generateMergePreview } from './services/conflictDetectionService';
 import { generateCommitSummary, generateChangelogEntry, explainBranchChanges, explainFileChanges, summarizeFileHistory } from './services/aiService';
 import { gitPushTag, gitSetUpstream, gitRebase, gitCompareBranches, gitDropCommit, gitResetBranch } from './services/localGitService';
@@ -512,7 +512,7 @@ const App: React.FC = () => {
       if (currentRepo?.isLocal && currentRepo.handle) {
         try {
           // Check if the path still exists and is a git repo
-          const isValid = await isGitRepo(currentRepo.handle);
+          const isValid = await isGitRepoPath(currentRepo.handle);
           if (!isValid) {
             console.warn('Saved repo path no longer exists or is not a git repo:', currentRepo.handle);
             setCurrentRepo(null);

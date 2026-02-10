@@ -1,4 +1,4 @@
-name: Build and Release
+name: CI and Release
 
 on:
   push:
@@ -16,7 +16,31 @@ permissions:
   contents: write
 
 jobs:
+  # Fast validation for all pushes and PRs
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Build Vite app
+        run: npm run build
+
+  # Full build only on tag push (releases)
   build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -39,7 +63,6 @@ jobs:
         with:
           node-version: '20'
 
-      # Linux: Install required dependencies for sharp and electron-builder BEFORE npm ci
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -49,15 +72,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # Type check before building
-      - name: TypeScript check
-        run: npx tsc --noEmit
-
-      # Build the Vite app
       - name: Build Vite app
         run: npm run build
 
-      # Build Electron app for each platform (--publish never to prevent auto-upload)
       - name: Build Electron app (Windows)
         if: matrix.platform == 'windows'
         run: npx electron-builder --win --publish never
@@ -70,7 +87,6 @@ jobs:
         if: matrix.platform == 'linux'
         run: npx electron-builder --linux --publish never
 
-      # Upload artifacts
       - name: Upload Windows artifacts
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
@@ -78,8 +94,7 @@ jobs:
           name: windows-build
           path: |
             dist/*.exe
-            dist/*.msi
-          retention-days: 30
+          retention-days: 7
 
       - name: Upload macOS artifacts
         if: matrix.platform == 'macos'
@@ -89,7 +104,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
-          retention-days: 30
+          retention-days: 7
 
       - name: Upload Linux artifacts
         if: matrix.platform == 'linux'
@@ -100,9 +115,9 @@ jobs:
             dist/*.AppImage
             dist/*.deb
             dist/*.rpm
-          retention-days: 30
+          retention-days: 7
 
-  # Create a release when a tag is pushed
+  # Create release after all builds complete
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
@@ -114,7 +129,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
+      - name: Display artifacts
         run: ls -R artifacts
 
       - name: Create Release

@@ -618,7 +618,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             {allBranches.map(branch => (
               <div
                 key={branch.name}
-                onClick={() => !branch.isRemote && onSelectBranch && onSelectBranch(branch.name)}
+                onClick={() => !branch.isRemote && !branch.active && onSelectBranch && onSelectBranch(branch.name)}
                 onContextMenu={(e) => handleBranchContextMenu(e, branch)}
                 onDragOver={(e) => !branch.isRemote && handleDragOver(e, branch.name)}
                 onDragLeave={handleDragLeave}

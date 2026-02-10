@@ -1,0 +1,5 @@
+{
+  "name": "GitKraken-ish Web",
+  "description": "A web-based Git GUI visualization demo mimicking GitKraken features with Gemini-powered commit analysis and message generation.",
+  "requestFramePermissions": []
+}

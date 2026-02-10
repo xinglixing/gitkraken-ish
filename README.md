@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # GitKraken-ish Desktop - Cross-Platform Git GUI
 
 A GitKraken-inspired desktop application built with React, Electron, and isomorphic-git. Features AI-powered commit messages, interactive commit graphs, and support for both local and remote repositories.

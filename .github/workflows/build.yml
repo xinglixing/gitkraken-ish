@@ -57,24 +57,18 @@ jobs:
       - name: Build Vite app
         run: npm run build
 
-      # Build Electron app for each platform
+      # Build Electron app for each platform (--publish never to prevent auto-upload)
       - name: Build Electron app (Windows)
         if: matrix.platform == 'windows'
-        run: npx electron-builder --win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never
 
       - name: Build Electron app (macOS)
         if: matrix.platform == 'macos'
-        run: npx electron-builder --mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac --publish never
 
       - name: Build Electron app (Linux)
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux --publish never
 
       # Upload artifacts
       - name: Upload Windows artifacts

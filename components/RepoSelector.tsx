@@ -86,6 +86,19 @@ const RepoSelector: React.FC<RepoSelectorProps> = ({ user, token, onSelect, onLo
   // Get platform for conditional rendering
   const platform = getPlatform();
 
+  // App version
+  const [appVersion, setAppVersion] = useState<string>('');
+
+  // Fetch app version on mount
+  useEffect(() => {
+      try {
+          const { ipcRenderer } = (window as any).require('electron');
+          ipcRenderer.invoke('updater:getVersion').then((version: string) => setAppVersion(version));
+      } catch {
+          // Fallback for non-electron environment
+      }
+  }, []);
+
   // Helper to ensure state and storage are in sync immediately
   const updateWorkspaces = (updater: (prev: Workspace[]) => Workspace[]) => {
       setWorkspaces(prev => {
@@ -586,43 +599,53 @@ const RepoSelector: React.FC<RepoSelectorProps> = ({ user, token, onSelect, onLo
 
       <div className="flex-1 overflow-hidden flex">
         {/* Workspaces Sidebar */}
-        <div className="w-64 bg-gk-panel border-r border-gk-header p-4 flex flex-col">
-            <div className="flex items-center justify-between mb-4 text-gray-400 text-xs font-bold uppercase">
-                <span>Workspaces</span>
-                <button 
-                    onClick={handleCreateWorkspace} 
-                    className="hover:text-white transition-colors"
-                    title="Create new workspace"
-                >
-                    <Plus className="w-4 h-4" />
-                </button>
-            </div>
-            {workspaces.map(ws => (
-                <div 
-                    key={ws.id} 
-                    onClick={() => handleSetActiveWorkspace(ws.id)}
-                    className={`flex items-center p-2 rounded cursor-pointer mb-1 group text-sm transition-all ${
-                        activeWorkspaceId === ws.id 
-                        ? 'bg-gk-blue/20 text-white border-l-2 border-gk-blue' 
-                        : 'hover:bg-white/5 text-gray-400 border-l-2 border-transparent'
-                    }`}
-                >
-                    <Layers className={`w-4 h-4 mr-2 ${activeWorkspaceId === ws.id ? 'text-gk-blue' : 'text-gray-500 group-hover:text-gray-300'}`} />
-                    <span className="flex-1 truncate font-medium">{ws.name}</span>
-                    <span className="text-[10px] bg-black/20 px-1.5 rounded text-gray-500 ml-2 group-hover:text-gray-400">
-                        {ws.repos.length}
-                    </span>
-                    {ws.id !== 'default' && (
-                        <button 
-                            onClick={(e) => handleDeleteWorkspace(e, ws.id)}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-gk-red transition-opacity ml-1"
-                            title="Delete Workspace"
-                        >
-                            <Trash2 className="w-3 h-3" />
-                        </button>
-                    )}
+        <div className="w-64 bg-gk-panel border-r border-gk-header flex flex-col">
+            <div className="flex-1 p-4">
+                <div className="flex items-center justify-between mb-4 text-gray-400 text-xs font-bold uppercase">
+                    <span>Workspaces</span>
+                    <button
+                        onClick={handleCreateWorkspace}
+                        className="hover:text-white transition-colors"
+                        title="Create new workspace"
+                    >
+                        <Plus className="w-4 h-4" />
+                    </button>
                 </div>
-            ))}
+                {workspaces.map(ws => (
+                    <div
+                        key={ws.id}
+                        onClick={() => handleSetActiveWorkspace(ws.id)}
+                        className={`flex items-center p-2 rounded cursor-pointer mb-1 group text-sm transition-all ${
+                            activeWorkspaceId === ws.id
+                            ? 'bg-gk-blue/20 text-white border-l-2 border-gk-blue'
+                            : 'hover:bg-white/5 text-gray-400 border-l-2 border-transparent'
+                        }`}
+                    >
+                        <Layers className={`w-4 h-4 mr-2 ${activeWorkspaceId === ws.id ? 'text-gk-blue' : 'text-gray-500 group-hover:text-gray-300'}`} />
+                        <span className="flex-1 truncate font-medium">{ws.name}</span>
+                        <span className="text-[10px] bg-black/20 px-1.5 rounded text-gray-500 ml-2 group-hover:text-gray-400">
+                            {ws.repos.length}
+                        </span>
+                        {ws.id !== 'default' && (
+                            <button
+                                onClick={(e) => handleDeleteWorkspace(e, ws.id)}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-gk-red transition-opacity ml-1"
+                                title="Delete Workspace"
+                            >
+                                <Trash2 className="w-3 h-3" />
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Version Footer */}
+            <div className="px-4 py-2 border-t border-gk-header bg-gk-header/50 shrink-0">
+                <div className="text-[10px] text-gray-300 flex items-center justify-center">
+                    <span>GitKraken-ish</span>
+                    {appVersion && <span className="ml-1 text-gray-400">v{appVersion}</span>}
+                </div>
+            </div>
         </div>
 
         {/* Workspace Content */}

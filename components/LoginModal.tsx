@@ -75,24 +75,38 @@ const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onSkip }) => {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        {/* Token Scope Notes */}
+        <div className="mt-6 bg-gk-bg/50 border border-white/5 rounded-lg p-4">
+          <div className="text-xs font-bold text-gray-400 mb-2">Required Token Scopes:</div>
+          <div className="text-[11px] text-gray-500 space-y-1">
+            <div className="flex items-start">
+              <span className="text-gk-accent mr-2">•</span>
+              <span><strong className="text-gray-400">repo</strong> - Full repository access (clone, push, pull)</span>
+            </div>
+            <div className="flex items-start">
+              <span className="text-gk-accent mr-2">•</span>
+              <span><strong className="text-gray-400">workflow</strong> - View and manage GitHub Actions</span>
+            </div>
+            <div className="flex items-start">
+              <span className="text-gk-accent mr-2">•</span>
+              <span><strong className="text-gray-400">read:user</strong> - Read your profile information</span>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => {
               const electronAPI = (window as any).electronAPI;
+              const url = 'https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=GitKraken-ish%20Desktop';
               if (electronAPI?.openExternal) {
-                electronAPI.openExternal('https://github.com/settings/tokens');
+                electronAPI.openExternal(url);
               } else {
-                window.open('https://github.com/settings/tokens', '_blank');
+                window.open(url, '_blank');
               }
             }}
-            className="text-xs text-gk-blue hover:underline cursor-pointer bg-transparent border-none"
+            className="mt-3 text-xs text-gk-blue hover:text-gk-blue/80 hover:underline cursor-pointer bg-transparent border-none"
           >
-            Generate a new token (Classic)
+            Generate token with correct scopes →
           </button>
-          <p className="text-[10px] text-gray-600 mt-2">
-            Required scopes: <code>repo</code>, <code>read:user</code>
-          </p>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Check, Key, MessageSquare, User as UserIcon, Plus, Trash2, LogOut, Github, Shield, Cpu, Settings, Keyboard, Bug } from 'lucide-react';
+import { X, Check, Key, MessageSquare, User as UserIcon, Plus, Trash2, LogOut, Github, Shield, Cpu, Settings, Keyboard, Bug, Download, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
 import { AIConfig, AIProvider, Profile, User, ShellPreference } from '../types';
 import { getProfiles, saveProfile, deleteProfile, setActiveProfileId, createProfile, isDuplicateProfile, clearAllProfileData, clearProfileSpecificData } from '../services/profileService';
 import { validateToken } from '../services/githubService';
@@ -18,7 +18,15 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = 'profiles' | 'ai' | 'general' | 'shortcuts' | 'debug';
+type Tab = 'profiles' | 'ai' | 'general' | 'shortcuts' | 'debug' | 'updates';
+
+interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  currentVersion?: string;
+  percent?: number;
+  error?: string;
+}
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
   config, activeProfile, onSaveConfig, onUpdateProfile, onSwitchProfile, onClose 
@@ -28,6 +36,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const { dialogState: confirmState, confirm: triggerConfirm, handleConfirm: onConfirmYes, handleCancel: onConfirmNo } = useConfirmDialog();
   const [localConfig, setLocalConfig] = useState<AIConfig>({ ...config });
   const [debugEnabled, setDebugEnabled] = useState(isDebugMode());
+
+  // Update state
+  const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' });
   
   // New Profile Form State
   const [isAddingProfile, setIsAddingProfile] = useState(false);
@@ -39,6 +50,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     setProfiles(getProfiles());
   }, [activeProfile]);
+
+  // Get current version and listen for update events
+  useEffect(() => {
+    try {
+      const { ipcRenderer } = (window as any).require('electron');
+
+      // Get current version
+      ipcRenderer.invoke('updater:getVersion').then((version: string) => {
+        setUpdateState(prev => ({ ...prev, currentVersion: version }));
+      });
+
+      // Listen for update status events
+      const handleUpdateStatus = (_event: any, data: any) => {
+        setUpdateState(prev => ({
+          ...prev,
+          status: data.status,
+          version: data.version || prev.version,
+          percent: data.percent,
+          error: data.message
+        }));
+      };
+
+      ipcRenderer.on('update:status', handleUpdateStatus);
+
+      return () => {
+        ipcRenderer.removeListener('update:status', handleUpdateStatus);
+      };
+    } catch {
+      // Fallback for non-electron environment
+    }
+  }, []);
 
   const updateKey = (provider: AIProvider, value: string) => {
     setLocalConfig(prev => ({
@@ -234,6 +276,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             >
                 <Bug className="w-4 h-4 mr-2" /> Debug
             </button>
+            <button
+                onClick={() => setActiveTab('updates')}
+                className={`flex items-center px-4 py-2 rounded text-sm mb-1 ${activeTab === 'updates' ? 'bg-gk-green/10 text-gk-green font-bold' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <Download className="w-4 h-4 mr-2" /> Updates
+            </button>
         </div>
 
         {/* Content */}
@@ -410,24 +458,53 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         {isAddingProfile && (
                             <div className="bg-white/5 p-4 rounded-lg border border-white/10 animate-fade-in">
                                 <h4 className="font-bold text-white mb-3">Connect New GitHub Account</h4>
-                                <input 
+                                <input
                                     type="text"
                                     value={newName}
                                     onChange={e => setNewName(e.target.value)}
                                     placeholder="Profile Name (e.g. Work)"
                                     className="w-full bg-gk-bg border border-white/10 rounded px-3 py-2 text-sm text-white mb-2 focus:border-gk-blue outline-none"
                                 />
-                                <input 
+                                <input
                                     type="password"
                                     value={newToken}
                                     onChange={e => setNewToken(e.target.value)}
                                     placeholder="GitHub Personal Access Token"
                                     className="w-full bg-gk-bg border border-white/10 rounded px-3 py-2 text-sm text-white mb-2 focus:border-gk-blue outline-none"
                                 />
+
+                                {/* Token Scope Notes */}
+                                <div className="bg-gk-bg/50 border border-white/5 rounded p-3 mb-3">
+                                    <div className="text-xs font-bold text-gray-400 mb-2">Required Token Scopes:</div>
+                                    <div className="text-[11px] text-gray-500 space-y-1">
+                                        <div className="flex items-start">
+                                            <span className="text-gk-accent mr-2">•</span>
+                                            <span><strong className="text-gray-400">repo</strong> - Full repository access (clone, push, pull)</span>
+                                        </div>
+                                        <div className="flex items-start">
+                                            <span className="text-gk-accent mr-2">•</span>
+                                            <span><strong className="text-gray-400">workflow</strong> - View and manage GitHub Actions</span>
+                                        </div>
+                                        <div className="flex items-start">
+                                            <span className="text-gk-accent mr-2">•</span>
+                                            <span><strong className="text-gray-400">read:user</strong> - Read your profile information</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            const electronAPI = (window as any).electronAPI;
+                                            electronAPI?.openExternal?.('https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=GitKraken-ish%20Desktop');
+                                        }}
+                                        className="mt-2 text-[11px] text-gk-blue hover:text-gk-blue/80 hover:underline"
+                                    >
+                                        Generate token with correct scopes →
+                                    </button>
+                                </div>
+
                                 {verifyError && <div className="text-xs text-gk-red mb-2">{verifyError}</div>}
                                 <div className="flex justify-end space-x-2">
                                     <button onClick={() => setIsAddingProfile(false)} className="px-3 py-1.5 text-gray-400 hover:text-white text-xs">Cancel</button>
-                                    <button 
+                                    <button
                                         onClick={handleAddProfile}
                                         disabled={verifyLoading}
                                         className="px-3 py-1.5 bg-gk-blue text-white rounded text-xs font-bold"
@@ -656,6 +733,150 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             <div className="p-4 bg-white/5 rounded-lg border border-white/5 space-y-2">
                                 <p className="text-sm text-gray-300">When debug mode is enabled, all Git operations and AI requests are logged to the Debug Panel.</p>
                                 <p className="text-sm text-gray-400">Open the Debug Panel from the toolbar to view logged commands, AI prompts, and errors.</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- UPDATES TAB --- */}
+                {activeTab === 'updates' && (
+                    <div className="space-y-6">
+                        {/* Current Version */}
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Current Version</h3>
+                            <div className="p-4 bg-white/5 rounded-lg border border-white/5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-lg font-bold text-gray-200">
+                                            v{updateState.currentVersion || '...'}
+                                        </div>
+                                        <div className="text-xs text-gray-500">GitKraken-ish Desktop</div>
+                                    </div>
+                                    <div className="text-2xl">🐙</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Update Status */}
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Updates</h3>
+                            <div className="p-4 bg-white/5 rounded-lg border border-white/5 space-y-4">
+
+                                {/* Status Display */}
+                                {updateState.status === 'idle' && (
+                                    <div className="flex items-center text-gray-400">
+                                        <RefreshCw className="w-5 h-5 mr-3" />
+                                        <span>Click below to check for updates</span>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'checking' && (
+                                    <div className="flex items-center text-gk-blue">
+                                        <RefreshCw className="w-5 h-5 mr-3 animate-spin" />
+                                        <span>Checking for updates...</span>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'not-available' && (
+                                    <div className="flex items-center text-gk-green">
+                                        <CheckCircle className="w-5 h-5 mr-3" />
+                                        <span>You're running the latest version!</span>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'available' && (
+                                    <div className="space-y-3">
+                                        <div className="flex items-center text-gk-accent">
+                                            <Download className="w-5 h-5 mr-3" />
+                                            <span>New version available: <strong>v{updateState.version}</strong></span>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                try {
+                                                    const { ipcRenderer } = (window as any).require('electron');
+                                                    ipcRenderer.invoke('updater:download');
+                                                } catch {}
+                                            }}
+                                            className="px-4 py-2 bg-gk-accent hover:bg-opacity-90 text-gk-bg font-bold rounded transition-colors"
+                                        >
+                                            Download Update
+                                        </button>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'downloading' && (
+                                    <div className="space-y-3">
+                                        <div className="flex items-center text-gk-blue">
+                                            <Download className="w-5 h-5 mr-3 animate-bounce" />
+                                            <span>Downloading update...</span>
+                                        </div>
+                                        <div className="w-full bg-gray-700 rounded-full h-2">
+                                            <div
+                                                className="bg-gk-blue h-2 rounded-full transition-all duration-300"
+                                                style={{ width: `${updateState.percent || 0}%` }}
+                                            />
+                                        </div>
+                                        <div className="text-xs text-gray-500 text-center">
+                                            {(updateState.percent || 0).toFixed(1)}%
+                                        </div>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'downloaded' && (
+                                    <div className="space-y-3">
+                                        <div className="flex items-center text-gk-green">
+                                            <CheckCircle className="w-5 h-5 mr-3" />
+                                            <span>Update downloaded! Ready to install v{updateState.version}</span>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                try {
+                                                    const { ipcRenderer } = (window as any).require('electron');
+                                                    ipcRenderer.invoke('updater:install');
+                                                } catch {}
+                                            }}
+                                            className="px-4 py-2 bg-gk-green hover:bg-opacity-90 text-gk-bg font-bold rounded transition-colors"
+                                        >
+                                            Install & Restart
+                                        </button>
+                                    </div>
+                                )}
+
+                                {updateState.status === 'error' && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center text-gk-red">
+                                            <AlertCircle className="w-5 h-5 mr-3" />
+                                            <span>Update check failed</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500">{updateState.error}</div>
+                                    </div>
+                                )}
+
+                                {/* Check for Updates Button */}
+                                {(updateState.status === 'idle' || updateState.status === 'not-available' || updateState.status === 'error') && (
+                                    <button
+                                        onClick={() => {
+                                            try {
+                                                const { ipcRenderer } = (window as any).require('electron');
+                                                setUpdateState(prev => ({ ...prev, status: 'checking' }));
+                                                ipcRenderer.invoke('updater:check');
+                                            } catch {}
+                                        }}
+                                        className="w-full px-4 py-2 bg-gk-blue/10 text-gk-blue border border-gk-blue/20 hover:bg-gk-blue/20 font-bold rounded transition-colors flex items-center justify-center"
+                                    >
+                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                        Check for Updates
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Info */}
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Information</h3>
+                            <div className="p-4 bg-white/5 rounded-lg border border-white/5 space-y-2">
+                                <p className="text-sm text-gray-300">Updates are downloaded from GitHub releases.</p>
+                                <p className="text-sm text-gray-400">After installing an update, the app will restart automatically.</p>
                             </div>
                         </div>
                     </div>

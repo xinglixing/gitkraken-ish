@@ -11,6 +11,18 @@ interface PlatformInfo {
   nodeVersion: string;
 }
 
+interface UpdateStatus {
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  releaseDate?: string;
+  releaseNotes?: string;
+  percent?: number;
+  bytesPerSecond?: number;
+  transferred?: number;
+  total?: number;
+  message?: string;
+}
+
 interface ElectronAPI {
   /**
    * Open a directory selection dialog
@@ -47,6 +59,34 @@ interface ElectronAPI {
    * Remove all listeners for a channel
    */
   removeAllListeners: (channel: string) => void;
+
+  // Auto-Updater API
+
+  /**
+   * Check for updates
+   */
+  checkForUpdates: () => Promise<{ success: boolean; version?: string; error?: string }>;
+
+  /**
+   * Download available update
+   */
+  downloadUpdate: () => Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * Install downloaded update and restart app
+   */
+  installUpdate: () => Promise<void>;
+
+  /**
+   * Get current app version
+   */
+  getAppVersion: () => Promise<string>;
+
+  /**
+   * Listen for update status events
+   * Returns an unsubscribe function
+   */
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
 }
 
 declare global {

@@ -64,6 +64,46 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   executeCommand: (command, cwd, shell) => ipcRenderer.invoke('shell:execute', { command, cwd, shell }),
 
+  // ==================== Auto-Updater API ====================
+
+  /**
+   * Check for updates
+   * @returns {Promise<{success: boolean, version?: string, error?: string}>}
+   */
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+
+  /**
+   * Download available update
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+
+  /**
+   * Install downloaded update and restart
+   */
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+
+  /**
+   * Get current app version
+   * @returns {Promise<string>}
+   */
+  getAppVersion: () => ipcRenderer.invoke('updater:getVersion'),
+
+  /**
+   * Listen for update status events
+   * @param {Function} callback - Callback receiving update status
+   * @returns {Function} Unsubscribe function
+   */
+  onUpdateStatus: (callback) => {
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('update:status', subscription);
+    return () => {
+      ipcRenderer.removeListener('update:status', subscription);
+    };
+  },
+
+  // ==================== End Auto-Updater API ====================
+
   /**
    * Send a message to main process (one-way)
    * @param {string} channel - The channel to send on

@@ -94,6 +94,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const { dialogState: confirmState, confirm: triggerConfirm, handleConfirm: onConfirmYes, handleCancel: onConfirmNo } = useConfirmDialog();
   const { showAlert } = useAlert();
 
+  // App version
+  const [appVersion, setAppVersion] = useState<string>('');
+
   // Filter state
   const [filterText, setFilterText] = useState('');
   const deferredFilter = useDeferredValue(filterText);
@@ -133,6 +136,16 @@ const Sidebar: React.FC<SidebarProps> = ({
     message: '',
     type: 'info'
   });
+
+  // Fetch app version on mount
+  useEffect(() => {
+      try {
+          const { ipcRenderer } = (window as any).require('electron');
+          ipcRenderer.invoke('updater:getVersion').then((version: string) => setAppVersion(version));
+      } catch {
+          // Fallback for non-electron environment
+      }
+  }, []);
 
   // Fetch GitHub info from local repo's remote and reset data when repo changes
   useEffect(() => {
@@ -828,6 +841,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                 ))}
             </div>
         )}
+      </div>
+
+      {/* Version Footer */}
+      <div className="px-4 py-2 border-t border-gk-header bg-gk-header/50 shrink-0">
+        <div className="text-[10px] text-gray-300 flex items-center justify-center">
+          <span>GitKraken-ish</span>
+          {appVersion && <span className="ml-1 text-gray-400">v{appVersion}</span>}
+        </div>
       </div>
 
       {/* Branch Context Menu */}

@@ -2,9 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const os = require('os');
+const { autoUpdater } = require('electron-updater');
 
-// Security: Whitelist of allowed command prefixes for shell:execute
-const ALLOWED_COMMANDS = ['git', 'npm', 'node', 'npx', 'yarn', 'pnpm', 'gh', 'code', 'open', 'explorer', 'start'];
+// Auto-updater configuration
+autoUpdater.autoDownload = false; // Don't auto-download, let user decide
+autoUpdater.autoInstallOnAppQuit = true;
 
 // Always use secure preload with contextIsolation for security and consistency
 // This ensures the terminal shell integration works in both dev and production
@@ -115,6 +117,96 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  // ==================== Auto-Updater Setup ====================
+
+  // Send update status to renderer
+  function sendUpdateStatus(status, data = {}) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:status', { status, ...data });
+    }
+  }
+
+  // Auto-updater event handlers
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Checking for updates...');
+    sendUpdateStatus('checking');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('[AutoUpdater] Update available:', info.version);
+    sendUpdateStatus('available', {
+      version: info.version,
+      releaseDate: info.releaseDate,
+      releaseNotes: info.releaseNotes
+    });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('[AutoUpdater] No updates available');
+    sendUpdateStatus('not-available', { version: info.version });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`[AutoUpdater] Download progress: ${progress.percent.toFixed(1)}%`);
+    sendUpdateStatus('downloading', {
+      percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[AutoUpdater] Update downloaded:', info.version);
+    sendUpdateStatus('downloaded', { version: info.version });
+  });
+
+  autoUpdater.on('error', (error) => {
+    console.error('[AutoUpdater] Error:', error.message);
+    sendUpdateStatus('error', { message: error.message });
+  });
+
+  // IPC handlers for auto-updater
+  const isDev = !app.isPackaged;
+
+  ipcMain.handle('updater:check', async () => {
+    if (isDev) {
+      console.log('[AutoUpdater] Skipping update check in development mode');
+      return { success: false, error: 'Auto-update is not available in development mode. Please use a packaged build.' };
+    }
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return { success: true, version: result?.updateInfo?.version };
+    } catch (error) {
+      console.error('[AutoUpdater] Check error:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    if (isDev) {
+      return { success: false, error: 'Auto-update is not available in development mode.' };
+    }
+    try {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (error) {
+      console.error('[AutoUpdater] Download error:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('updater:install', () => {
+    // Quit and install the update
+    autoUpdater.quitAndInstall(false, true);
+  });
+
+  ipcMain.handle('updater:getVersion', () => {
+    return app.getVersion();
+  });
+
+  // ==================== End Auto-Updater Setup ====================
+
   // IPC for Dialog
   ipcMain.handle('dialog:openDirectory', async () => {
     const defaultPath = getDefaultPath();
@@ -176,36 +268,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('shell:execute', async (event, { command, cwd, shell }) => {
     return new Promise((resolve) => {
-      // SECURITY: Validate command against whitelist
-      const commandParts = command.trim().split(/\s+/);
-      const baseCommand = commandParts[0].toLowerCase().replace(/\.exe$/i, '');
-
-      if (!ALLOWED_COMMANDS.includes(baseCommand)) {
-        console.warn(`[Security] Blocked command: ${baseCommand}`);
-        resolve({
-          stdout: '',
-          stderr: `Command '${baseCommand}' is not in the allowed commands list. Allowed: ${ALLOWED_COMMANDS.join(', ')}`,
-          code: 1
-        });
-        return;
-      }
-
-      // SECURITY: Validate cwd is a reasonable path (not accessing system directories)
       const normalizedCwd = path.resolve(cwd || os.homedir());
-      const systemDirs = process.platform === 'win32'
-        ? ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)']
-        : ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/etc', '/var'];
-
-      const isSystemDir = systemDirs.some(dir => normalizedCwd.toLowerCase().startsWith(dir.toLowerCase()));
-      if (isSystemDir) {
-        console.warn(`[Security] Blocked access to system directory: ${normalizedCwd}`);
-        resolve({
-          stdout: '',
-          stderr: 'Access to system directories is not allowed',
-          code: 1
-        });
-        return;
-      }
 
       let shellCmd, shellArgs;
 

@@ -1,0 +1,126 @@
+name: 🐛 Bug report
+description: Report something that is broken or incorrect
+title: "Bug: <short description>"
+labels: ["type/bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please provide enough detail for us to reproduce and fix it.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How bad is the impact?
+      options:
+        - "S1 - Critical (outage/data loss/security)"
+        - "S2 - High (major feature broken, no workaround)"
+        - "S3 - Medium (partial breakage, workaround exists)"
+        - "S4 - Low (minor issue/cosmetic)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened? What did you expect?
+      placeholder: "When I ..., the app ... but I expected ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest set of steps to reproduce the issue.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "It should..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "It does..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence (logs, screenshots, error messages)
+      description: Paste logs and error messages (redact secrets). Include request IDs, stack traces, screenshots, etc.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: App version, release tag, or git SHA
+      placeholder: "v1.2.3 or 1a2b3c4"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Operating System
+      multiple: false
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (Ubuntu/Debian)
+        - Linux (Fedora/RHEL)
+        - Linux (Other)
+    validations:
+      required: true
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System details
+      description: Any additional system information that might be relevant.
+      placeholder: |
+        - Architecture: x64 / ARM64
+        - Git version:
+        - Shell: PowerShell / CMD / Bash / Zsh
+        - Installation type: Installer / Portable
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Have you found any workaround for this issue?
+      placeholder: "I found that if I ... it works"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and didn’t find a duplicate.
+          required: true
+        - label: I included all information needed to reproduce the issue.
+          required: true

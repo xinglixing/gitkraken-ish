@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions / Discussions
+    url: https://github.com/xinglixing/gitkraken-ish/discussions
+    about: Please ask and answer questions here.
+  - name: 🔒 Security report
+    url: https://github.com/xinglixing/gitkraken-ish/security/policy
+    about: Please report security issues here.

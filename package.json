@@ -1,10 +1,10 @@
 {
   "name": "gitkraken-ish-desktop",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "A GitKraken-inspired Git GUI with AI-powered commit messages",
   "author": "xinglixing",
   "license": "MIT",
-  "homepage": "https://github.com/xinglixing/gitkraken-ish-desktop",
+  "homepage": "https://github.com/xinglixing/gitkraken-ish",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -40,7 +40,7 @@
     "publish": {
       "provider": "github",
       "owner": "xinglixing",
-      "repo": "gitkraken-ish-desktop"
+      "repo": "gitkraken-ish"
     },
     "directories": {
       "output": "dist",

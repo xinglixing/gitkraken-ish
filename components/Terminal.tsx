@@ -368,6 +368,8 @@ const Terminal: React.FC<TerminalProps> = ({ isOpen, toggle, repo, onRefresh, on
             setHistory(prev => [...prev, `Error: ${e.message}`]);
         } finally {
             setIsExecuting(false);
+            // Auto-focus input after command completes
+            setTimeout(() => inputRef.current?.focus(), 0);
         }
   };
 
@@ -421,23 +423,121 @@ const Terminal: React.FC<TerminalProps> = ({ isOpen, toggle, repo, onRefresh, on
     updateAutocomplete(value);
   };
 
-  // Render clickable SHAs in output
-  const renderLine = (line: string, key: number) => {
-    // Match 7+ hex char SHAs
-    const shaRegex = /\b([0-9a-f]{7,40})\b/g;
+  // Focus input when clicking anywhere in terminal
+  const handleTerminalClick = (e: React.MouseEvent) => {
+    // Don't focus if user is selecting text or clicking a link
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) return;
+    if ((e.target as HTMLElement).closest('a, button, [role="button"]')) return;
+    inputRef.current?.focus();
+  };
+
+  // Syntax highlighting patterns
+  const highlightLine = (text: string): React.ReactNode[] => {
     const parts: React.ReactNode[] = [];
+    let remaining = text;
+    let keyIndex = 0;
+
+    // Helper to add highlighted spans
+    const addPart = (content: string, className?: string) => {
+      if (content) {
+        parts.push(
+          className ? <span key={keyIndex++} className={className}>{content}</span> : content
+        );
+      }
+    };
+
+    // Command prompt line ($ ...)
+    if (remaining.startsWith('$ ')) {
+      addPart('$ ', 'text-gk-accent font-bold');
+      remaining = remaining.slice(2);
+
+      // Highlight the command itself
+      const cmdMatch = remaining.match(/^(\S+)/);
+      if (cmdMatch) {
+        addPart(cmdMatch[1], 'text-gk-yellow');
+        remaining = remaining.slice(cmdMatch[1].length);
+      }
+    }
+
+    // Process remaining text with patterns
+    const patterns: [RegExp, string][] = [
+      // Git SHAs (7-40 hex chars) - clickable, handled separately
+      // Error keywords
+      [/\b(error|Error|ERROR|fatal|Fatal|FATAL|failed|Failed|FAILED|denied|Denied)\b/g, 'text-gk-red font-semibold'],
+      // Warning keywords
+      [/\b(warning|Warning|WARNING|warn|Warn|WARN)\b/g, 'text-gk-yellow'],
+      // Success keywords
+      [/\b(success|Success|SUCCESS|done|Done|DONE|ok|Ok|OK|passed|Passed|PASSED)\b/g, 'text-gk-accent'],
+      // Git branch names (origin/..., refs/...)
+      [/(origin\/[\w\-\.\/]+|refs\/[\w\-\.\/]+)/g, 'text-gk-purple'],
+      // File paths with extensions
+      [/(\S+\.(ts|tsx|js|jsx|json|md|yml|yaml|css|scss|html|py|go|rs|java|c|cpp|h|sh|bash|zsh))\b/g, 'text-gk-blue'],
+      // Diff additions
+      [/^(\+.*)$/gm, 'text-gk-accent'],
+      // Diff deletions
+      [/^(\-.*)$/gm, 'text-gk-red'],
+      // Numbers
+      [/\b(\d+)\b/g, 'text-orange-400'],
+      // Quoted strings
+      [/("[^"]*"|'[^']*')/g, 'text-amber-300'],
+      // URLs
+      [/(https?:\/\/[^\s]+)/g, 'text-gk-blue underline'],
+    ];
+
+    // Simple tokenization - split by pattern matches
+    let result = remaining;
+
+    // Apply highlighting by wrapping matches
+    patterns.forEach(([pattern, className]) => {
+      const regex = new RegExp(pattern.source, pattern.flags);
+      result = result.replace(regex, `<HL:${className}>$1</HL>`);
+    });
+
+    // Parse the marked-up string
+    const hlRegex = /<HL:([^>]+)>([^<]*)<\/HL>/g;
+    let lastIdx = 0;
+    let hlMatch;
+
+    while ((hlMatch = hlRegex.exec(result)) !== null) {
+      // Add text before match
+      if (hlMatch.index > lastIdx) {
+        parts.push(<span key={keyIndex++}>{result.slice(lastIdx, hlMatch.index)}</span>);
+      }
+      // Add highlighted match
+      parts.push(<span key={keyIndex++} className={hlMatch[1]}>{hlMatch[2]}</span>);
+      lastIdx = hlMatch.index + hlMatch[0].length;
+    }
+
+    // Add remaining text
+    if (lastIdx < result.length) {
+      parts.push(<span key={keyIndex++}>{result.slice(lastIdx)}</span>);
+    }
+
+    return parts.length > 0 ? parts : [text];
+  };
+
+  // Render line with clickable SHAs and syntax highlighting
+  const renderLine = (line: string, key: number) => {
+    // First handle clickable SHAs
+    const shaRegex = /\b([0-9a-f]{7,40})\b/g;
+    const segments: React.ReactNode[] = [];
     let lastIndex = 0;
     let match;
+    let segmentKey = 0;
 
     while ((match = shaRegex.exec(line)) !== null) {
+      // Add text before SHA with highlighting
       if (match.index > lastIndex) {
-        parts.push(line.slice(lastIndex, match.index));
+        const beforeText = line.slice(lastIndex, match.index);
+        segments.push(<span key={segmentKey++}>{highlightLine(beforeText)}</span>);
       }
+      // Add clickable SHA
       const sha = match[1];
-      parts.push(
+      segments.push(
         <span
-          key={`sha-${match.index}`}
-          className="text-gk-blue cursor-pointer hover:underline"
+          key={`sha-${segmentKey++}`}
+          className="text-gk-blue cursor-pointer hover:underline font-mono"
           onClick={() => onNavigateToCommit?.(sha)}
           title={`Navigate to ${sha}`}
         >
@@ -447,11 +547,17 @@ const Terminal: React.FC<TerminalProps> = ({ isOpen, toggle, repo, onRefresh, on
       lastIndex = match.index + match[0].length;
     }
 
+    // Add remaining text with highlighting
     if (lastIndex < line.length) {
-      parts.push(line.slice(lastIndex));
+      segments.push(<span key={segmentKey++}>{highlightLine(line.slice(lastIndex))}</span>);
     }
 
-    return <div key={key} className="whitespace-pre-wrap leading-tight mb-1">{parts.length > 0 ? parts : line}</div>;
+    // If no SHAs found, just highlight the whole line
+    if (segments.length === 0) {
+      return <div key={key} className="whitespace-pre-wrap leading-tight mb-1">{highlightLine(line)}</div>;
+    }
+
+    return <div key={key} className="whitespace-pre-wrap leading-tight mb-1">{segments}</div>;
   };
 
   if (!isOpen) {
@@ -506,7 +612,13 @@ const Terminal: React.FC<TerminalProps> = ({ isOpen, toggle, repo, onRefresh, on
             </button>
           </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar text-gray-300" ref={terminalRef} role="log" aria-label="Terminal output">
+      <div
+        className="flex-1 overflow-y-auto p-4 custom-scrollbar text-gray-300 cursor-text"
+        ref={terminalRef}
+        role="log"
+        aria-label="Terminal output"
+        onClick={handleTerminalClick}
+      >
          {history.map((line, i) => renderLine(line, i))}
          <div className="flex items-center mt-2 relative">
              {isExecuting ? (

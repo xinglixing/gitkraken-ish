@@ -4,6 +4,7 @@ const STORAGE_KEY = 'gk_custom_shortcuts';
 
 export const DEFAULT_SHORTCUTS: ShortcutMapping[] = [
   { id: 'commandPalette', action: 'Command Palette', keys: 'Ctrl+Shift+P', isCustom: false },
+  { id: 'terminal', action: 'Toggle Terminal', keys: 'Ctrl+`', isCustom: false },
   { id: 'save', action: 'Save', keys: 'Ctrl+S', isCustom: false },
   { id: 'undo', action: 'Undo', keys: 'Ctrl+Z', isCustom: false },
   { id: 'redo', action: 'Redo', keys: 'Ctrl+Y', isCustom: false },

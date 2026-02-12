@@ -862,6 +862,12 @@ const App: React.FC = () => {
         e.preventDefault();
         setShowSearchPanel(true);
       }
+
+      // Ctrl+` - Toggle Terminal
+      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+        e.preventDefault();
+        setShowTerminal(prev => !prev);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);

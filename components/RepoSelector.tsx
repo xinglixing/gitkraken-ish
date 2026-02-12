@@ -293,30 +293,50 @@ const RepoSelector: React.FC<RepoSelectorProps> = ({ user, token, onSelect, onLo
           }
 
           const isRepo = await isGitRepo(repo);
+          let isNewlyInitialized = false;
+
           if (!isRepo) {
+              // Get default branch name from settings
+              let configDefaultBranch = 'main';
+              try {
+                  const savedConfig = localStorage.getItem('gk_ai_config');
+                  if (savedConfig) {
+                      const config = JSON.parse(savedConfig);
+                      if (config.defaultBranch) {
+                          configDefaultBranch = config.defaultBranch;
+                      }
+                  }
+              } catch { /* use default */ }
+
               const initOk = await triggerConfirm({
                   title: 'Initialize Git Repository',
-                  message: `The folder "${repo.name}" is not a Git repository. Initialize Git here?`,
+                  message: `The folder "${repo.name}" is not a Git repository. Initialize Git here with branch "${configDefaultBranch}"?`,
                   type: 'info',
                   confirmText: 'Initialize',
               });
               if (!initOk) return;
               try {
-                  await initGitRepo(repo);
+                  await initGitRepo(repo, configDefaultBranch);
+                  isNewlyInitialized = true;
+                  // Set default branch to the configured branch name
+                  // (no commits yet, so getCurrentBranch would fail)
+                  repo.default_branch = configDefaultBranch;
               } catch (e) {
                   showAlert('Git Init Error', "Failed to initialize git: " + e.message, 'error');
                   return;
               }
           }
 
-          // Resolve actual branch name instead of 'HEAD'
-          try {
-              const branchName = await getCurrentBranch(repo);
-              if (branchName && branchName !== 'HEAD') {
-                  repo.default_branch = branchName;
+          // Resolve actual branch name instead of 'HEAD' (only for existing repos)
+          if (!isNewlyInitialized) {
+              try {
+                  const branchName = await getCurrentBranch(repo);
+                  if (branchName && branchName !== 'HEAD') {
+                      repo.default_branch = branchName;
+                  }
+              } catch {
+                  // Keep 'HEAD' if resolution fails
               }
-          } catch {
-              // Keep 'HEAD' if resolution fails
           }
 
           const added = saveRepoToWorkspace(repo);

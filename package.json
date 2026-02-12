@@ -1,6 +1,6 @@
 {
   "name": "gitkraken-ish-desktop",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "A GitKraken-inspired Git GUI with AI-powered commit messages",
   "author": "xinglixing",
   "license": "MIT",

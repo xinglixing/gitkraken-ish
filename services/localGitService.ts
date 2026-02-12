@@ -1125,6 +1125,19 @@ export const fetchLocalCommits = async (
         });
     } catch (e) {
         console.error('Error fetching local commits:', e);
+
+        // Handle empty repos (just initialized, no commits yet)
+        // Return empty array instead of throwing
+        if (e.message && (
+            e.message.includes('Could not find') ||
+            e.message.includes('NotFoundError') ||
+            e.message.includes('resolve ref') ||
+            e.message.includes('refs/heads/')
+        )) {
+            console.debug('Repository appears to be empty (no commits yet)');
+            return [];
+        }
+
         // Provide better error message for common issues
         if (e.message && e.message.includes('not found')) {
             throw new Error(`Could not find branch or commit "${branch}". This might not be a valid Git repository.`);
@@ -1255,9 +1268,9 @@ export const isGitRepoPath = async (path: string): Promise<boolean> => {
     }
 };
 
-export const initGitRepo = async (repo: Repository) => {
+export const initGitRepo = async (repo: Repository, defaultBranch: string = 'main') => {
     const { fs, dir } = getGitContext(repo);
-    await git.init({ fs, dir, defaultBranch: 'main' });
+    await git.init({ fs, dir, defaultBranch });
 
     // Configure Git with platform-specific settings
     try {

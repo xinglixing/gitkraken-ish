@@ -94,7 +94,7 @@ jobs:
           name: windows-build
           path: |
             dist/*.exe
-            dist/*.yml
+            dist/latest.yml
           retention-days: 7
 
       - name: Upload macOS artifacts
@@ -105,7 +105,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/*.yml
+            dist/latest-mac.yml
           retention-days: 7
 
       - name: Upload Linux artifacts
@@ -117,7 +117,7 @@ jobs:
             dist/*.AppImage
             dist/*.deb
             dist/*.rpm
-            dist/*.yml
+            dist/latest-linux.yml
           retention-days: 7
 
   # Create release after all builds complete

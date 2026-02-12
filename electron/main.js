@@ -275,7 +275,7 @@ app.whenReady().then(() => {
       if (process.platform === 'win32') {
         if (shell && shell.toLowerCase().includes('powershell')) {
           shellCmd = 'powershell.exe';
-          shellArgs = ['-NoProfile', '-Command', command];
+          shellArgs = ['-ExecutionPolicy', 'Bypass', '-Command', command];
         } else {
           shellCmd = 'cmd.exe';
           shellArgs = ['/c', command];

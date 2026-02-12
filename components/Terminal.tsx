@@ -28,7 +28,7 @@ const executeShellCommand = (command: string, cwd: string, shell: string): Promi
       if (os.platform() === 'win32') {
         if (shell?.toLowerCase().includes('powershell')) {
           shellCmd = 'powershell.exe';
-          shellArgs = ['-NoProfile', '-Command', command];
+          shellArgs = ['-ExecutionPolicy', 'Bypass', '-Command', command];
         } else if (shell?.toLowerCase().includes('bash')) {
           shellCmd = 'bash.exe';
           shellArgs = ['-c', command];
@@ -372,6 +372,12 @@ const Terminal: React.FC<TerminalProps> = ({ isOpen, toggle, repo, onRefresh, on
   };
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
+    // Ctrl+L to clear terminal
+    if (e.ctrlKey && e.key === 'l') {
+      e.preventDefault();
+      setHistory([]);
+      return;
+    }
     if (e.key === 'Enter') {
         const cmd = input;
         setHistory(prev => [...prev, `$ ${cmd}`]);

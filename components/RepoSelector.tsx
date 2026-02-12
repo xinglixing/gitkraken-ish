@@ -100,14 +100,27 @@ const RepoSelector: React.FC<RepoSelectorProps> = ({ user, token, onSelect, onLo
   }, []);
 
   // Helper to ensure state and storage are in sync immediately
+  // Save to localStorage FIRST (synchronously) before updating state
   const updateWorkspaces = (updater: (prev: Workspace[]) => Workspace[]) => {
-      setWorkspaces(prev => {
-          const newState = updater(prev);
-          try {
-            localStorage.setItem('gk_workspaces', JSON.stringify(newState));
-          } catch (e) { console.error("Failed to save workspaces", e); }
-          return newState;
-      });
+      // Get current workspaces from localStorage to ensure we have latest
+      let currentWorkspaces = workspaces;
+      try {
+          const saved = localStorage.getItem('gk_workspaces');
+          if (saved) currentWorkspaces = JSON.parse(saved);
+      } catch {}
+
+      // Compute new state
+      const newState = updater(currentWorkspaces);
+
+      // Save to localStorage FIRST (synchronous, guaranteed)
+      try {
+          localStorage.setItem('gk_workspaces', JSON.stringify(newState));
+      } catch (e) {
+          console.error("Failed to save workspaces", e);
+      }
+
+      // Then update React state
+      setWorkspaces(newState);
   };
 
   const handleSetActiveWorkspace = (id: string) => {

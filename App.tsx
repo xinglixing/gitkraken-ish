@@ -3865,7 +3865,7 @@ const App: React.FC = () => {
           return <PullRequestDetails pr={selectedPR} repo={currentRepo} token={activeProfile?.githubToken} onClose={() => setViewMode(ViewMode.GRAPH)} onCheckout={(b) => handleSwitchBranch(b)} />;
       }
       if (viewMode === ViewMode.ISSUE_DETAIL && selectedIssue) {
-          return <IssueDetails issue={selectedIssue} repo={currentRepo} token={activeProfile?.githubToken} onClose={() => setViewMode(ViewMode.GRAPH)} />;
+          return <IssueDetails issue={selectedIssue} repo={currentRepo} token={activeProfile?.githubToken} aiConfig={aiConfig} onClose={() => setViewMode(ViewMode.GRAPH)} onRefresh={() => refreshRepoData(false)} />;
       }
 
       // Determine visibility of WIP node (GitKraken style - always show when there are uncommitted changes)

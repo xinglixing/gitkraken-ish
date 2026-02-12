@@ -699,3 +699,86 @@ export const suggestUndo = async (
   const raw = await executeAIRequest(provider, apiKey, model, prompt, true);
   return parseAIJsonResponse(raw, { suggestion: 'Unable to suggest an undo action.' });
 }
+
+/**
+ * AI Issue Fix - Analyze an issue and generate code fixes
+ */
+export interface IssueFix {
+  analysis: string;
+  files: {
+    path: string;
+    action: 'create' | 'modify' | 'delete';
+    content?: string;
+    explanation: string;
+  }[];
+  testSuggestions?: string[];
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export const generateIssueFix = async (
+  issue: { title: string; body: string; number: number },
+  repoFiles: string[],
+  fileContents: { path: string; content: string }[],
+  config: AIConfig
+): Promise<IssueFix> => {
+  const { provider, keys } = config;
+  const apiKey = keys[provider];
+  if (!apiKey) {
+    return {
+      analysis: 'No API key configured. Please set up an AI provider in Settings.',
+      files: [],
+      confidence: 'low'
+    };
+  }
+
+  const model = getModel(config);
+
+  // Build context from file contents
+  const fileContext = fileContents.slice(0, 5).map(f =>
+    `--- ${f.path} ---\n${f.content.substring(0, 2000)}${f.content.length > 2000 ? '\n...(truncated)' : ''}`
+  ).join('\n\n');
+
+  const prompt = `
+    You are an expert software engineer tasked with fixing a GitHub issue.
+
+    ISSUE #${issue.number}: ${issue.title}
+
+    Description:
+    ${issue.body || 'No description provided.'}
+
+    Repository files available:
+    ${repoFiles.slice(0, 30).join('\n')}
+
+    Relevant file contents:
+    ${fileContext}
+
+    Analyze this issue and generate code fixes. Return a JSON object with:
+
+    1. "analysis": A brief explanation of the root cause and your fix approach (2-3 sentences)
+
+    2. "files": An array of file changes, each with:
+       - "path": The file path relative to repo root
+       - "action": "create", "modify", or "delete"
+       - "content": The complete new file content (for create/modify)
+       - "explanation": Why this change is needed
+
+    3. "testSuggestions": (optional) Array of test cases to verify the fix
+
+    4. "confidence": "high", "medium", or "low" based on how confident you are in the fix
+
+    IMPORTANT:
+    - For "modify" actions, provide the COMPLETE new file content, not just the diff
+    - Focus on minimal, targeted changes to fix the issue
+    - Don't make unrelated changes or refactoring
+    - If you can't determine the fix, set confidence to "low" and explain in analysis
+
+    Return raw JSON without markdown code blocks.
+  `;
+
+  const raw = await executeAIRequest(provider, apiKey, model, prompt, true);
+  return parseAIJsonResponse(raw, {
+    analysis: 'Unable to analyze this issue. The issue description may not contain enough information.',
+    files: [],
+    confidence: 'low'
+  });
+};

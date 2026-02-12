@@ -241,7 +241,10 @@ export const fetchIssues = async (token: string, owner: string, repo: string): P
     title: i.title,
     number: i.number,
     status: i.state,
-    author: i.user.login
+    author: i.user.login,
+    body: i.body,
+    created_at: i.created_at,
+    html_url: i.html_url
   }));
 };
 

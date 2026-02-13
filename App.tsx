@@ -37,7 +37,10 @@ import { WorktreesPanel } from './components/WorktreesPanel';
 import { InteractiveRebasePanel, RebaseCommit } from './components/InteractiveRebasePanel';
 import DebugPanel from './components/DebugPanel';
 import MergePreviewModal from './components/MergePreviewModal';
+import { ToastContainer, ToastItem } from './components/Toast';
+import UpdateDialog from './components/UpdateDialog';
 import { isDebugMode } from './services/debugService';
+import { checkForUpdates, ReleaseInfo, CURRENT_VERSION } from './services/updateService';
 import { MoveHorizontal, Plus, AlertCircle, AlertTriangle, Check, X, Sparkles, ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
 
 import { Commit, Branch, Repository, User, AIConfig, ViewMode, Profile, WorkflowRun, PullRequest, Issue, Stash } from './types';
@@ -186,6 +189,8 @@ const App: React.FC = () => {
       return null;
     }
   });
+  // Parent repo tracking for submodules/worktrees navigation
+  const [parentRepo, setParentRepo] = useState<Repository | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [commitIdsRef] = useState(() => ({ current: new Set<string>() })); // Mutable ref for O(1) commit lookup
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -252,6 +257,13 @@ const App: React.FC = () => {
 
   // AI Loading State
   const [aiLoading, setAiLoading] = useState<{ isLoading: boolean; message: string }>({ isLoading: false, message: '' });
+
+  // Toast notifications
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  // Update dialog state
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ releaseInfo: ReleaseInfo; currentVersion: string } | null>(null);
 
   // Sync Loading State (Push/Pull/Fetch)
   const [syncLoading, setSyncLoading] = useState<{ isLoading: boolean; message: string; type: 'push' | 'pull' | 'fetch' | null }>({ isLoading: false, message: '', type: null });
@@ -496,6 +508,59 @@ const App: React.FC = () => {
   };
 
   // Note: Profile is now initialized in useState to avoid flash of LoginModal on reload
+
+  // Toast notification helpers
+  const addToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    setToasts(prev => [...prev, { ...toast, id }]);
+    return id;
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Check for updates on app start
+  useEffect(() => {
+    const checkUpdates = async () => {
+      try {
+        const result = await checkForUpdates();
+        if (result.hasUpdate && result.releaseInfo) {
+          // Show toast notification for update
+          addToast({
+            type: 'update',
+            title: `Update Available (v${result.latestVersion})`,
+            message: 'A new version is ready to download.',
+            duration: 0, // Persistent until user interacts
+            actions: [
+              {
+                label: 'Update Now',
+                variant: 'primary',
+                onClick: () => {
+                  setUpdateInfo({
+                    releaseInfo: result.releaseInfo!,
+                    currentVersion: result.currentVersion
+                  });
+                  setUpdateDialogOpen(true);
+                }
+              },
+              {
+                label: 'Later',
+                variant: 'secondary',
+                onClick: () => {} // Just close the toast
+              }
+            ]
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to check for updates:', e);
+      }
+    };
+
+    // Small delay to not block initial render
+    const timer = setTimeout(checkUpdates, 2000);
+    return () => clearTimeout(timer);
+  }, [addToast]);
 
   // Save current repo to localStorage when it changes
   useEffect(() => {
@@ -3743,6 +3808,7 @@ const App: React.FC = () => {
         setShowGitflowPanel(false);
         setShowGraphFilters(false);
         setShowInteractiveRebase(false);
+        setShowWorktreesPanel(false);
         setShowReflogViewer(true);
       },
       onOpenGraphFilters: () => {
@@ -3751,6 +3817,7 @@ const App: React.FC = () => {
         setShowSubmodulesPanel(false);
         setShowGitflowPanel(false);
         setShowInteractiveRebase(false);
+        setShowWorktreesPanel(false);
         setShowGraphFilters(true);
       },
       onOpenGitflowPanel: () => {
@@ -3759,6 +3826,7 @@ const App: React.FC = () => {
         setShowSubmodulesPanel(false);
         setShowGraphFilters(false);
         setShowInteractiveRebase(false);
+        setShowWorktreesPanel(false);
         setShowGitflowPanel(true);
       },
       onOpenSnapshotsPanel: () => {
@@ -3767,6 +3835,7 @@ const App: React.FC = () => {
         setShowGitflowPanel(false);
         setShowGraphFilters(false);
         setShowInteractiveRebase(false);
+        setShowWorktreesPanel(false);
         setShowSnapshotsPanel(true);
       },
       onCreateSnapshot: async () => {
@@ -3816,10 +3885,36 @@ const App: React.FC = () => {
         // Trigger AI message generation via the commit panel
         showAlert('AI Commit Message', 'Open the commit panel and click "Generate Message with AI".', 'info');
       },
+      onCheckForUpdates: async () => {
+        try {
+          const result = await checkForUpdates(true); // Force check
+          if (result.hasUpdate && result.releaseInfo) {
+            setUpdateInfo({
+              releaseInfo: result.releaseInfo,
+              currentVersion: result.currentVersion
+            });
+            setUpdateDialogOpen(true);
+          } else {
+            addToast({
+              type: 'success',
+              title: 'Up to Date',
+              message: `You're running the latest version (v${CURRENT_VERSION}).`,
+              duration: 4000
+            });
+          }
+        } catch (e: any) {
+          addToast({
+            type: 'error',
+            title: 'Update Check Failed',
+            message: e.message || 'Could not check for updates.',
+            duration: 5000
+          });
+        }
+      },
       isLocal: !!currentRepo?.isLocal,
       branches: branches,
     });
-  }, [currentRepo, branches, selectedCommits, selectedCommit]);
+  }, [currentRepo, branches, selectedCommits, selectedCommit, addToast]);
 
   const performStashWithMessage = async () => {
       if (!currentRepo?.isLocal) return;
@@ -3835,6 +3930,10 @@ const App: React.FC = () => {
     // Clear undo state when switching repos
     if (repo?.id !== currentRepo?.id) {
       clearUndo();
+    }
+    // Clear parent repo when going back to repo selector
+    if (repo === null) {
+      setParentRepo(null);
     }
     setCurrentRepo(repo);
   };
@@ -4176,6 +4275,7 @@ const App: React.FC = () => {
                 setShowGitflowPanel(false);
                 setShowGraphFilters(false);
                 setShowInteractiveRebase(false);
+                setShowWorktreesPanel(false);
                 setShowReflogViewer(true);
               }}
               onOpenGraphFilters={() => {
@@ -4184,6 +4284,7 @@ const App: React.FC = () => {
                 setShowSubmodulesPanel(false);
                 setShowGitflowPanel(false);
                 setShowInteractiveRebase(false);
+                setShowWorktreesPanel(false);
                 setShowGraphFilters(true);
               }}
               onOpenSnapshots={() => {
@@ -4192,6 +4293,7 @@ const App: React.FC = () => {
                 setShowGitflowPanel(false);
                 setShowGraphFilters(false);
                 setShowInteractiveRebase(false);
+                setShowWorktreesPanel(false);
                 setShowSnapshotsPanel(true);
               }}
               onOpenSubmodules={() => {
@@ -4200,8 +4302,18 @@ const App: React.FC = () => {
                 setShowGitflowPanel(false);
                 setShowGraphFilters(false);
                 setShowInteractiveRebase(false);
+                setShowWorktreesPanel(false);
                 setShowSubmodulesPanel(true);
               }}
+              onOpenWorktrees={currentRepo?.isLocal ? () => {
+                setShowReflogViewer(false);
+                setShowSnapshotsPanel(false);
+                setShowGitflowPanel(false);
+                setShowGraphFilters(false);
+                setShowInteractiveRebase(false);
+                setShowSubmodulesPanel(false);
+                setShowWorktreesPanel(true);
+              } : undefined}
               hasUncommittedChanges={hasUncommittedChanges}
               stashCount={stashes.length}
               aheadCount={aheadBehind.ahead}
@@ -4211,6 +4323,12 @@ const App: React.FC = () => {
               largeFileWarnings={largeFileWarnings}
               onOpenDebugPanel={() => setShowDebugPanel(true)}
               debugMode={debugModeEnabled}
+              parentRepo={parentRepo}
+              onBackToParent={parentRepo ? () => {
+                const parent = parentRepo;
+                setParentRepo(null);
+                handleSelectRepo(parent);
+              } : undefined}
               undoButton={
                 <UndoButton repo={currentRepo} onRefresh={refreshRepoData} undoState={undoState} onUndo={handleUndo} redoState={redoState} onRedo={handleRedo} />
               }
@@ -4516,7 +4634,7 @@ const App: React.FC = () => {
           title="⚠️ Potential Conflicts Detected"
           type="warning"
           onClose={() => setConflictWarning({ isOpen: false, files: [] })}
-          onConfirm={() => conflictWarning.onContinue?.()}
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4561,6 +4679,7 @@ const App: React.FC = () => {
           title="Amend Last Commit"
           type="info"
           onClose={() => setAmendDialog({ isOpen: false, commitMessage: '' })}
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4604,7 +4723,7 @@ const App: React.FC = () => {
           title="Undo Last Commit"
           type="warning"
           onClose={() => setUndoCommitDialog({ isOpen: false })}
-          onConfirm={() => {}}  // Handled by buttons below
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4645,6 +4764,7 @@ const App: React.FC = () => {
           title="Revert Commit"
           type="info"
           onClose={() => setRevertDialog({ isOpen: false, commit: null })}
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4729,7 +4849,7 @@ const App: React.FC = () => {
           title="⚠️ Discard All Changes"
           type="warning"
           onClose={() => setDiscardAllDialog({ isOpen: false })}
-          onConfirm={executeDiscardAll}
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4769,6 +4889,7 @@ const App: React.FC = () => {
           title="Checkout Commit"
           type="info"
           onClose={() => setCheckoutDialog({ isOpen: false, commit: null, currentBranch: '' })}
+          hideDefaultButton={true}
         >
           <div className="space-y-4">
             <p className="text-gray-200">
@@ -4910,10 +5031,12 @@ const App: React.FC = () => {
           onClose={() => setShowSubmodulesPanel(false)}
           repo={currentRepo}
           onOpenSubmodule={(path) => {
-            // Open submodule as a new repo
+            // Open submodule as a new repo, track parent for back navigation
             if (currentRepo) {
+              setParentRepo(currentRepo);
               const submodulePath = `${currentRepo.path}/${path}`;
-              handleSelectRepo({ ...currentRepo, path: submodulePath, name: path });
+              setShowSubmodulesPanel(false);
+              handleSelectRepo({ ...currentRepo, path: submodulePath, name: `[Submodule] ${path}` });
             }
           }}
         />
@@ -4926,15 +5049,17 @@ const App: React.FC = () => {
           onClose={() => setShowWorktreesPanel(false)}
           repo={currentRepo}
           onOpenWorktree={(path) => {
-            // Open worktree as a new repo
+            // Open worktree as a new repo, track parent for back navigation
             if (currentRepo) {
+              setParentRepo(currentRepo);
               const worktreeName = path.split(/[\\/]/).pop() || path;
+              setShowWorktreesPanel(false);
               handleSelectRepo({
                 ...currentRepo,
                 id: `worktree-${Date.now()}`,
                 path: path,
                 handle: path,
-                name: worktreeName,
+                name: `[Worktree] ${worktreeName}`,
                 full_name: path,
               });
             }
@@ -4999,6 +5124,19 @@ const App: React.FC = () => {
                 });
             }
           }}
+        />
+      )}
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* Update Dialog */}
+      {updateDialogOpen && updateInfo && (
+        <UpdateDialog
+          isOpen={updateDialogOpen}
+          onClose={() => setUpdateDialogOpen(false)}
+          releaseInfo={updateInfo.releaseInfo}
+          currentVersion={updateInfo.currentVersion}
         />
       )}
     </div>

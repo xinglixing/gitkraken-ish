@@ -219,7 +219,7 @@ const StashPanel: React.FC<StashPanelProps> = ({
             title="⚠️ Drop Stash"
             type="warning"
             onClose={() => setConfirmDrop({ isOpen: false, stashId: '', message: '' })}
-            onConfirm={confirmDropStash}
+            hideDefaultButton={true}
           >
             <div className="space-y-4">
               <p className="text-gray-200">
@@ -237,6 +237,20 @@ const StashPanel: React.FC<StashPanelProps> = ({
               <p className="text-sm text-gray-400">
                 All changes in this stash will be permanently deleted.
               </p>
+              <div className="flex space-x-3 justify-end">
+                <button
+                  onClick={() => setConfirmDrop({ isOpen: false, stashId: '', message: '' })}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDropStash}
+                  className="px-4 py-2 bg-gk-red hover:bg-red-600 text-white font-bold rounded transition-colors"
+                >
+                  Drop Stash
+                </button>
+              </div>
             </div>
           </AlertDialog>
         )}

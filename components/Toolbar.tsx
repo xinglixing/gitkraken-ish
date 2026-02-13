@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { ArrowDown, ArrowUp, Plus, Settings, GitMerge, GitPullRequest, GitBranch, ChevronDown, User as UserIcon, Folder, Archive, Search, Command, Loader2, Globe, History, Filter, Camera, FolderTree, AlertTriangle, Bug } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Settings, GitMerge, GitPullRequest, GitBranch, ChevronDown, User as UserIcon, Folder, Archive, Search, Command, Loader2, Globe, History, Filter, Camera, FolderTree, AlertTriangle, Bug, GitFork, ArrowLeft } from 'lucide-react';
 import { User, Repository, Profile, Branch } from '../types';
 import { isLocalRepo } from '../utils/repository';
 import { isDebugMode } from '../services/debugService';
@@ -26,6 +26,9 @@ interface ToolbarProps {
   onOpenGraphFilters?: () => void;
   onOpenSnapshots?: () => void;
   onOpenSubmodules?: () => void;
+  onOpenWorktrees?: () => void;
+  parentRepo?: Repository | null;
+  onBackToParent?: () => void;
   hasUncommittedChanges?: boolean;
   remoteCount?: number;
   stashCount?: number;
@@ -44,7 +47,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
     activeProfile, repo, branches, onOpenSettings, onSwitchRepo,
     onPull, onPush, onBranch, onGitflow, onCreatePR, onOpenBranchSwitcher,
     onStash, onUnstash, onOpenStashList, onOpenCommandPalette, onOpenSearch,
-    onManageRemotes, onOpenReflog, onOpenGraphFilters, onOpenSnapshots, onOpenSubmodules,
+    onManageRemotes, onOpenReflog, onOpenGraphFilters, onOpenSnapshots, onOpenSubmodules, onOpenWorktrees,
+    parentRepo, onBackToParent,
     hasUncommittedChanges, stashCount, undoButton, remoteCount = -1,
     aheadCount = 0, behindCount = 0, isFetching = false, lastFetchTime, dirtyFileCount = 0,
     largeFileWarnings = [], onOpenDebugPanel, debugMode = false
@@ -69,6 +73,18 @@ const Toolbar: React.FC<ToolbarProps> = ({
             <Folder className="w-5 h-5 mb-0.5" />
             <span className="text-[10px] font-bold">Repos</span>
         </button>
+
+        {/* Back to Parent - Show when in submodule/worktree */}
+        {parentRepo && onBackToParent && (
+          <button
+            onClick={onBackToParent}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gk-purple/20 hover:bg-gk-purple/30 border border-gk-purple/40 rounded-lg text-gk-purple transition-colors"
+            title={`Back to ${parentRepo.name}`}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-xs font-medium">Back to {parentRepo.name}</span>
+          </button>
+        )}
 
         {/* Git Operations - Only show for local repos */}
         {isLocal && (
@@ -242,6 +258,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
                >
                   <FolderTree className="w-5 h-5 mb-0.5" />
                   <span className="text-[10px] font-bold">Modules</span>
+               </button>
+               )}
+               {onOpenWorktrees && (
+               <button
+                  onClick={onOpenWorktrees}
+                  className="flex flex-col items-center justify-center w-14 h-12 hover:bg-white/5 rounded text-gray-400 hover:text-white transition-colors"
+                  title="Worktrees"
+               >
+                  <GitFork className="w-5 h-5 mb-0.5" />
+                  <span className="text-[10px] font-bold">Worktree</span>
                </button>
                )}
             </div>

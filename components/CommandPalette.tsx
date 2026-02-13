@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, GitBranch, GitCommit, Archive, Settings, Sparkles, ArrowDown, ArrowUp, Plus, RotateCcw, Tag, FileText, Clock, Eye, History, Filter, FolderTree, Camera, GitFork, FilePlus, Send, Users, GitPullRequest } from 'lucide-react';
+import { Search, GitBranch, GitCommit, Archive, Settings, Sparkles, ArrowDown, ArrowUp, Plus, RotateCcw, Tag, FileText, Clock, Eye, History, Filter, FolderTree, Camera, GitFork, FilePlus, Send, Users, GitPullRequest, Download } from 'lucide-react';
 
 export interface Command {
   id: string;
@@ -196,7 +196,7 @@ export function createAppCommands({
   onOpenReflogViewer, onOpenGraphFilters, onOpenGitflowPanel,
   onOpenSnapshotsPanel, onCreateSnapshot, onOpenSubmodulesPanel,
   onInteractiveRebase, onCherryPickCommit, onGenerateAICommitMessage,
-  onCreateFile, onCommitAndPush, onOpenWorktrees,
+  onCreateFile, onCommitAndPush, onOpenWorktrees, onCheckForUpdates,
   isLocal, branches
 }: {
   onPull?: () => void;
@@ -225,6 +225,7 @@ export function createAppCommands({
   onCreateFile?: () => void;
   onCommitAndPush?: () => void;
   onOpenWorktrees?: () => void;
+  onCheckForUpdates?: () => void;
   isLocal: boolean;
   branches?: { name: string; isRemote: boolean; active?: boolean }[];
 }): Command[] {
@@ -397,6 +398,18 @@ export function createAppCommands({
       icon: <FolderTree className="w-4 h-4" />,
       action: onOpenWorktrees,
       keywords: ['worktree', 'workspace', 'parallel']
+    });
+  }
+
+  // --- System Commands ---
+  if (onCheckForUpdates) {
+    cmds.push({
+      id: 'check-updates',
+      label: 'Check for Updates',
+      group: 'System',
+      icon: <Download className="w-4 h-4" />,
+      action: onCheckForUpdates,
+      keywords: ['update', 'upgrade', 'version', 'release']
     });
   }
 

@@ -1065,8 +1065,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         isOpen={deleteConfirmDialog.isOpen}
         onClose={() => setDeleteConfirmDialog({ isOpen: false, branchName: '' })}
         title="Confirm Delete Branch"
-        type="info"
-        onConfirm={confirmDeleteBranch}
+        type="warning"
+        hideDefaultButton={true}
       >
         <div className="space-y-3">
           <p className="text-gray-200">
@@ -1075,6 +1075,20 @@ const Sidebar: React.FC<SidebarProps> = ({
           <p className="text-yellow-400 text-sm">
             ⚠️ This action cannot be undone. All commits unique to this branch will be lost.
           </p>
+          <div className="flex space-x-3 justify-end">
+            <button
+              onClick={() => setDeleteConfirmDialog({ isOpen: false, branchName: '' })}
+              className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmDeleteBranch}
+              className="px-4 py-2 bg-gk-red hover:bg-red-600 text-white font-bold rounded transition-colors"
+            >
+              Delete
+            </button>
+          </div>
         </div>
       </AlertDialog>
 

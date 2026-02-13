@@ -201,6 +201,7 @@ const UndoButton: React.FC<UndoButtonProps> = ({ repo, onRefresh, undoState, onU
         title="Confirm Undo"
         type="info"
         highZIndex={true}
+        hideDefaultButton={true}
       >
         <div className="space-y-3">
           <p className="text-gray-200">

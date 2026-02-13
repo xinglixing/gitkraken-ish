@@ -29,6 +29,7 @@ interface ToolbarProps {
   onOpenWorktrees?: () => void;
   parentRepo?: Repository | null;
   onBackToParent?: () => void;
+  repoHistoryDepth?: number; // How many levels deep in submodules/worktrees
   hasUncommittedChanges?: boolean;
   remoteCount?: number;
   stashCount?: number;
@@ -48,7 +49,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
     onPull, onPush, onBranch, onGitflow, onCreatePR, onOpenBranchSwitcher,
     onStash, onUnstash, onOpenStashList, onOpenCommandPalette, onOpenSearch,
     onManageRemotes, onOpenReflog, onOpenGraphFilters, onOpenSnapshots, onOpenSubmodules, onOpenWorktrees,
-    parentRepo, onBackToParent,
+    parentRepo, onBackToParent, repoHistoryDepth = 0,
     hasUncommittedChanges, stashCount, undoButton, remoteCount = -1,
     aheadCount = 0, behindCount = 0, isFetching = false, lastFetchTime, dirtyFileCount = 0,
     largeFileWarnings = [], onOpenDebugPanel, debugMode = false
@@ -78,11 +79,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
         {parentRepo && onBackToParent && (
           <button
             onClick={onBackToParent}
-            className="flex items-center gap-2 px-3 py-1.5 bg-gk-purple/20 hover:bg-gk-purple/30 border border-gk-purple/40 rounded-lg text-gk-purple transition-colors"
-            title={`Back to ${parentRepo.name}`}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gk-purple/20 hover:bg-gk-purple/30 border border-gk-purple/40 rounded-lg text-gk-purple transition-colors relative"
+            title={`Back to ${parentRepo.name}${repoHistoryDepth > 1 ? ` (${repoHistoryDepth} levels deep)` : ''}`}
           >
             <ArrowLeft className="w-4 h-4" />
-            <span className="text-xs font-medium">Back to {parentRepo.name}</span>
+            <span className="text-xs font-medium truncate max-w-[150px]">Back to {parentRepo.name}</span>
+            {repoHistoryDepth > 1 && (
+              <span className="ml-1 px-1.5 py-0.5 bg-gk-purple/30 rounded text-[10px] font-bold">
+                {repoHistoryDepth}
+              </span>
+            )}
           </button>
         )}
 

@@ -44,7 +44,7 @@ import { checkForUpdates, ReleaseInfo, CURRENT_VERSION } from './services/update
 import { MoveHorizontal, Plus, AlertCircle, AlertTriangle, Check, X, Sparkles, ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
 
 import { Commit, Branch, Repository, User, AIConfig, ViewMode, Profile, WorkflowRun, PullRequest, Issue, Stash } from './types';
-import { fetchBranches, fetchCommits } from './services/githubService';
+import { fetchBranches, fetchCommits, validateToken } from './services/githubService';
 import {
     fetchLocalBranches, fetchLocalCommits, gitPull, gitPush, createBranch,
     gitCherryPick, gitCheckout, gitInitGitflow, gitStageAll, gitUnstageAll, gitDiscardAll, gitStash, fetchStashes, gitStashApply, gitStashPop, gitStashDrop, gitSquashCommits,
@@ -52,7 +52,7 @@ import {
     gitAmend, gitUndoCommit, gitRevert, gitHasCommits,
     gitCreateTag, gitRenameBranch, getAheadBehind, gitMerge, gitListTags, gitResolveTagRefs,
     gitListRemotes, fastBranchRefresh, hasMoreCommits as checkHasMoreCommits, gitClone,
-    gitGetFileContent, gitStage, gitWriteFile, gitListFiles
+    gitGetFileContent, gitStage, gitWriteFile, gitListFiles, clearRepoCache
 } from './services/localGitService';
 import { getCurrentBranch, isGitRepoPath } from './services/localGitService';
 import { hasConflicts, detectPotentialConflicts, generateMergePreview } from './services/conflictDetectionService';
@@ -158,7 +158,17 @@ const App: React.FC = () => {
       return null;
     }
   });
-  const [skipLogin, setSkipLogin] = useState(false);
+  // Persist skipLogin preference so local-only users don't get prompted every time
+  const [skipLogin, setSkipLogin] = useState(() => {
+    try {
+      return localStorage.getItem('gk_skip_login') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  // Token validation state
+  const [isValidatingToken, setIsValidatingToken] = useState(false);
+  const [tokenExpired, setTokenExpired] = useState(false);
 
   // SECURITY WARNING: AI config containing API keys is stored in localStorage.
   // For production, consider migrating to OS keychain (electron-keytar) or encrypted storage.
@@ -189,8 +199,8 @@ const App: React.FC = () => {
       return null;
     }
   });
-  // Parent repo tracking for submodules/worktrees navigation
-  const [parentRepo, setParentRepo] = useState<Repository | null>(null);
+  // Navigation history stack for submodules/worktrees (supports nested navigation)
+  const [repoHistory, setRepoHistory] = useState<Repository[]>([]);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [commitIdsRef] = useState(() => ({ current: new Set<string>() })); // Mutable ref for O(1) commit lookup
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -561,6 +571,71 @@ const App: React.FC = () => {
     const timer = setTimeout(checkUpdates, 2000);
     return () => clearTimeout(timer);
   }, [addToast]);
+
+  // Validate stored GitHub token on startup
+  useEffect(() => {
+    const validateStoredToken = async () => {
+      // Only validate if we have an active profile with a GitHub token
+      if (!activeProfile?.githubToken) return;
+
+      setIsValidatingToken(true);
+      try {
+        // Try to validate the token by fetching user info
+        const user = await validateToken(activeProfile.githubToken);
+        // Token is valid - update user info in case it changed
+        if (user.login !== activeProfile.githubUser?.login ||
+            user.name !== activeProfile.githubUser?.name ||
+            user.avatar_url !== activeProfile.githubUser?.avatar_url) {
+          const updatedProfile = {
+            ...activeProfile,
+            githubUser: user
+          };
+          saveProfile(updatedProfile);
+          setActiveProfile(updatedProfile);
+        }
+        setTokenExpired(false);
+      } catch (error) {
+        console.warn('Stored GitHub token is invalid or expired:', error);
+        setTokenExpired(true);
+        // Show toast notification about expired token
+        addToast({
+          type: 'warning',
+          title: 'GitHub Token Expired',
+          message: 'Your GitHub token is no longer valid. Please re-authenticate.',
+          duration: 0, // Persistent
+          actions: [
+            {
+              label: 'Re-authenticate',
+              variant: 'primary',
+              onClick: () => {
+                // Clear the profile to show login modal
+                setActiveProfile(null);
+                setTokenExpired(false);
+              }
+            },
+            {
+              label: 'Use Local Only',
+              variant: 'secondary',
+              onClick: () => {
+                // Switch to local-only mode
+                const local = createLocalProfile();
+                setActiveProfile(local);
+                setSkipLogin(true);
+                localStorage.setItem('gk_skip_login', 'true');
+                setTokenExpired(false);
+              }
+            }
+          ]
+        });
+      } finally {
+        setIsValidatingToken(false);
+      }
+    };
+
+    // Validate token after a short delay to not block initial render
+    const timer = setTimeout(validateStoredToken, 500);
+    return () => clearTimeout(timer);
+  }, []); // Only run once on mount
 
   // Save current repo to localStorage when it changes
   useEffect(() => {
@@ -957,9 +1032,12 @@ const App: React.FC = () => {
       setActiveProfile(newProfile);
   };
   
-  const handleSkipLogin = () => { 
-      setSkipLogin(true); 
+  const handleSkipLogin = () => {
+      setSkipLogin(true);
+      localStorage.setItem('gk_skip_login', 'true');
       const local = createLocalProfile();
+      saveProfile(local); // Also save local profile for persistence
+      setActiveProfileId(local.id);
       setActiveProfile(local);
   };
   
@@ -968,6 +1046,8 @@ const App: React.FC = () => {
       setActiveProfile(null);
       setActiveProfileId('');
       setSkipLogin(false);
+      localStorage.removeItem('gk_skip_login');
+      setTokenExpired(false);
       // Clear undo state when logging out
       clearUndo();
       // Clear all stored profile and account data
@@ -3924,6 +4004,18 @@ const App: React.FC = () => {
       catch(e:any) { showAlert('Stash Error', e.message, 'error'); } finally { setLoadingData(false); }
   }
 
+  // Show loading while validating stored token
+  if (isValidatingToken) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gk-bg">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-gk-accent border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Validating credentials...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!activeProfile && !skipLogin) return <LoginModal onLogin={handleLogin} onSkip={handleSkipLogin} />;
   
   const handleSelectRepo = (repo: Repository | null) => {
@@ -3931,9 +4023,9 @@ const App: React.FC = () => {
     if (repo?.id !== currentRepo?.id) {
       clearUndo();
     }
-    // Clear parent repo when going back to repo selector
+    // Clear navigation history when going back to repo selector
     if (repo === null) {
-      setParentRepo(null);
+      setRepoHistory([]);
     }
     setCurrentRepo(repo);
   };
@@ -4323,11 +4415,19 @@ const App: React.FC = () => {
               largeFileWarnings={largeFileWarnings}
               onOpenDebugPanel={() => setShowDebugPanel(true)}
               debugMode={debugModeEnabled}
-              parentRepo={parentRepo}
-              onBackToParent={parentRepo ? () => {
-                const parent = parentRepo;
-                setParentRepo(null);
-                handleSelectRepo(parent);
+              parentRepo={repoHistory.length > 0 ? repoHistory[repoHistory.length - 1] : null}
+              repoHistoryDepth={repoHistory.length}
+              onBackToParent={repoHistory.length > 0 ? () => {
+                // Pop the last repo from history and navigate to it
+                const newHistory = [...repoHistory];
+                const parent = newHistory.pop()!;
+                setRepoHistory(newHistory);
+                // Clear cache for fresh data
+                clearRepoCache();
+                // Reset state for fresh load
+                setBranches([]);
+                setCommits([]);
+                setCurrentRepo(parent);
               } : undefined}
               undoButton={
                 <UndoButton repo={currentRepo} onRefresh={refreshRepoData} undoState={undoState} onUndo={handleUndo} redoState={redoState} onRedo={handleRedo} />
@@ -5030,13 +5130,33 @@ const App: React.FC = () => {
           isOpen={showSubmodulesPanel}
           onClose={() => setShowSubmodulesPanel(false)}
           repo={currentRepo}
-          onOpenSubmodule={(path) => {
-            // Open submodule as a new repo, track parent for back navigation
+          onOpenSubmodule={(submodulePath) => {
+            // Open submodule as a new repo, push current repo to history for back navigation
             if (currentRepo) {
-              setParentRepo(currentRepo);
-              const submodulePath = `${currentRepo.path}/${path}`;
+              // Push current repo to history stack (supports nested submodules)
+              setRepoHistory(prev => [...prev, currentRepo]);
+              // Build full path using path.join for proper OS-specific handling
+              const parentPath = currentRepo.handle || currentRepo.path || '';
+              const nodePath = (window as any).require?.('path');
+              const fullPath = nodePath ? nodePath.join(parentPath, submodulePath) : `${parentPath}/${submodulePath}`.replace(/\//g, '\\');
               setShowSubmodulesPanel(false);
-              handleSelectRepo({ ...currentRepo, path: submodulePath, name: `[Submodule] ${path}` });
+              // Clear cache for fresh data
+              clearRepoCache();
+              // Reset branches/commits state for fresh load
+              setBranches([]);
+              setCommits([]);
+              // Create submodule repo - spread parent for required props, then override
+              handleSelectRepo({
+                ...currentRepo,
+                id: `submodule-${Date.now()}`,
+                name: `[Submodule] ${submodulePath}`,
+                full_name: fullPath,
+                path: fullPath,
+                handle: fullPath,
+                isLocal: true, // Explicitly ensure local repo
+                default_branch: 'HEAD', // Let it detect the active branch
+                owner: undefined, // Clear GitHub-specific owner
+              });
             }
           }}
         />
@@ -5048,19 +5168,28 @@ const App: React.FC = () => {
           isOpen={showWorktreesPanel}
           onClose={() => setShowWorktreesPanel(false)}
           repo={currentRepo}
-          onOpenWorktree={(path) => {
-            // Open worktree as a new repo, track parent for back navigation
+          onOpenWorktree={(worktreePath) => {
+            // Open worktree as a new repo, push current repo to history for back navigation
             if (currentRepo) {
-              setParentRepo(currentRepo);
-              const worktreeName = path.split(/[\\/]/).pop() || path;
+              // Push current repo to history stack (supports nested navigation)
+              setRepoHistory(prev => [...prev, currentRepo]);
+              const worktreeName = worktreePath.split(/[\\/]/).pop() || worktreePath;
               setShowWorktreesPanel(false);
+              // Clear cache for fresh data
+              clearRepoCache();
+              // Reset branches/commits state for fresh load
+              setBranches([]);
+              setCommits([]);
+              // Create worktree repo - spread parent for required props, then override
               handleSelectRepo({
                 ...currentRepo,
                 id: `worktree-${Date.now()}`,
-                path: path,
-                handle: path,
                 name: `[Worktree] ${worktreeName}`,
-                full_name: path,
+                full_name: worktreePath,
+                path: worktreePath,
+                handle: worktreePath,
+                isLocal: true, // Explicitly ensure local repo
+                default_branch: 'HEAD', // Let it detect the active branch
               });
             }
           }}

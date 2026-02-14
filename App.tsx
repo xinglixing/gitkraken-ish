@@ -28,6 +28,7 @@ import SearchPanel from './components/SearchPanel';
 import BlameView from './components/BlameView';
 import FileHistory from './components/FileHistory';
 import { FileEditor } from './components/FileEditor';
+import IssueReporter from './components/IssueReporter';
 import { ReflogViewer } from './components/ReflogViewer';
 import { GraphFilters, GraphFilterState, filterCommits } from './components/GraphFilters';
 import { GitflowPanel } from './components/GitflowPanel';
@@ -54,7 +55,7 @@ import {
     gitListRemotes, fastBranchRefresh, hasMoreCommits as checkHasMoreCommits, gitClone,
     gitGetFileContent, gitStage, gitWriteFile, gitListFiles, clearRepoCache
 } from './services/localGitService';
-import { getCurrentBranch, isGitRepoPath } from './services/localGitService';
+import { getCurrentBranch, isGitRepoPath, isSubmoduleModified, getSubmoduleStatus } from './services/localGitService';
 import { hasConflicts, detectPotentialConflicts, generateMergePreview } from './services/conflictDetectionService';
 import { generateCommitSummary, generateChangelogEntry, explainBranchChanges, explainFileChanges, summarizeFileHistory } from './services/aiService';
 import { gitPushTag, gitSetUpstream, gitRebase, gitCompareBranches, gitDropCommit, gitResetBranch } from './services/localGitService';
@@ -228,7 +229,22 @@ const App: React.FC = () => {
   const [isPanelOpen, setIsPanelOpen] = useState(false); 
 
   const [showSettings, setShowSettings] = useState(false);
-  const [showTerminal, setShowTerminal] = useState(false);
+  // Load terminal state from localStorage
+  const [showTerminal, setShowTerminal] = useState(() => {
+    try {
+      return localStorage.getItem('gk_terminal_open') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  // Load commit section minimize state from localStorage
+  const [isCommitSectionMinimized, setIsCommitSectionMinimized] = useState(() => {
+    try {
+      return localStorage.getItem('gk_commit_section_minimized') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [showMergeTool, setShowMergeTool] = useState(false);
   const [showPRModal, setShowPRModal] = useState(false);
   const [showBranchSwitcher, setShowBranchSwitcher] = useState(false);
@@ -248,6 +264,7 @@ const App: React.FC = () => {
   const [showInteractiveRebase, setShowInteractiveRebase] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [debugModeEnabled, setDebugModeEnabled] = useState(isDebugMode());
+  const [showIssueReporter, setShowIssueReporter] = useState(false);
   const [showMergePreview, setShowMergePreview] = useState(false);
   const [mergePreviewData, setMergePreviewData] = useState<any>(null);
   const [rebaseInProgress, setRebaseInProgress] = useState<{
@@ -672,6 +689,16 @@ const App: React.FC = () => {
     localStorage.setItem('gk_ai_config', JSON.stringify(aiConfig));
   }, [aiConfig]);
 
+  // Persist terminal state
+  useEffect(() => {
+    localStorage.setItem('gk_terminal_open', String(showTerminal));
+  }, [showTerminal]);
+
+  // Persist commit section minimize state
+  useEffect(() => {
+    localStorage.setItem('gk_commit_section_minimized', String(isCommitSectionMinimized));
+  }, [isCommitSectionMinimized]);
+
   // Polling for local dirty status
   // Track previous dirty state and HEAD to detect external changes
   const prevDirtyRef = useRef(false);
@@ -1007,6 +1034,12 @@ const App: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key === '`') {
         e.preventDefault();
         setShowTerminal(prev => !prev);
+      }
+
+      // Ctrl+Shift+I - Open Issue Reporter
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
+        e.preventDefault();
+        setShowIssueReporter(true);
       }
     };
 
@@ -1738,6 +1771,7 @@ const App: React.FC = () => {
 
                           // Record undo state
                           recordOperation(
+                              currentRepo,
                               'cherry-pick',
                               beforeHEAD,
                               afterHEAD,
@@ -1811,6 +1845,7 @@ const App: React.FC = () => {
                           refreshRepoData();
 
                           recordOperation(
+                              currentRepo,
                               'interactive-rebase' as GitOperation,
                               beforeHEAD,
                               afterHEAD,
@@ -1915,6 +1950,7 @@ const App: React.FC = () => {
 
               // Record undo state
               recordOperation(
+                  currentRepo,
                   'cherry-pick',
                   beforeHEAD,
                   afterHEAD,
@@ -1991,6 +2027,7 @@ const App: React.FC = () => {
 
                   // Record undo state
                   recordOperation(
+                      currentRepo,
                       'cherry-pick',
                       beforeHEAD,
                       afterHEAD,
@@ -2518,6 +2555,7 @@ const App: React.FC = () => {
 
         // Record undo state
         recordOperation(
+            currentRepo,
             'squash',
             beforeHEAD,
             afterHEAD,
@@ -2796,6 +2834,7 @@ const App: React.FC = () => {
 
       // Record undo state
       recordOperation(
+        currentRepo,
         'interactive-rebase',
         beforeHEAD,
         afterHEAD,
@@ -3357,6 +3396,7 @@ const App: React.FC = () => {
 
       // Record undo state
       recordOperation(
+        currentRepo,
         'reset',
         beforeHEAD,
         afterHEAD,
@@ -3929,7 +3969,7 @@ const App: React.FC = () => {
           }
         }
       },
-      onOpenSubmodulesPanel: () => {
+      onOpenSubmodulesPanel: aiConfig.enableSubmoduleFeatures ? () => {
         setShowReflogViewer(false);
         setShowSnapshotsPanel(false);
         setShowGitflowPanel(false);
@@ -3937,7 +3977,7 @@ const App: React.FC = () => {
         setShowInteractiveRebase(false);
         setShowWorktreesPanel(false);
         setShowSubmodulesPanel(true);
-      },
+      } : undefined,
       onOpenWorktrees: currentRepo?.isLocal ? () => {
         setShowReflogViewer(false);
         setShowSnapshotsPanel(false);
@@ -3991,6 +4031,7 @@ const App: React.FC = () => {
           });
         }
       },
+      onReportIssue: () => setShowIssueReporter(true),
       isLocal: !!currentRepo?.isLocal,
       branches: branches,
     });
@@ -4019,9 +4060,27 @@ const App: React.FC = () => {
   if (!activeProfile && !skipLogin) return <LoginModal onLogin={handleLogin} onSkip={handleSkipLogin} />;
   
   const handleSelectRepo = (repo: Repository | null) => {
-    // Clear undo state when switching repos
+    // Clear states when switching repos
     if (repo?.id !== currentRepo?.id) {
       clearUndo();
+      // Clear UI selection states
+      setSelectedCommit(null);
+      setSelectedCommits([]);
+      setContextMenu(null);
+      setIsPanelOpen(false);
+      // Close any open panels/modals
+      setShowSubmodulesPanel(false);
+      setShowStashPanel(false);
+      setShowInteractiveRebase(false);
+      setShowSnapshotsPanel(false);
+      setShowWorktreesPanel(false);
+      setShowGitflowPanel(false);
+      setShowSquashDialog(false);
+      setReorderDialog(null);
+      setCherryPickDialog(null);
+      setAmendDialog(null);
+      setRevertDialog(null);
+      setUndoCommitDialog(null);
     }
     // Clear navigation history when going back to repo selector
     if (repo === null) {
@@ -4047,6 +4106,7 @@ const App: React.FC = () => {
                 onUpdateProfile={(p) => setActiveProfile(p)}
                 onSwitchProfile={handleSwitchProfile}
                 onClose={() => { setShowSettings(false); setDebugModeEnabled(isDebugMode()); }}
+                onReportIssue={() => setShowIssueReporter(true)}
             />
         )}
     </>
@@ -4388,7 +4448,7 @@ const App: React.FC = () => {
                 setShowWorktreesPanel(false);
                 setShowSnapshotsPanel(true);
               }}
-              onOpenSubmodules={() => {
+              onOpenSubmodules={aiConfig.enableSubmoduleFeatures ? () => {
                 setShowReflogViewer(false);
                 setShowSnapshotsPanel(false);
                 setShowGitflowPanel(false);
@@ -4396,7 +4456,7 @@ const App: React.FC = () => {
                 setShowInteractiveRebase(false);
                 setShowWorktreesPanel(false);
                 setShowSubmodulesPanel(true);
-              }}
+              } : undefined}
               onOpenWorktrees={currentRepo?.isLocal ? () => {
                 setShowReflogViewer(false);
                 setShowSnapshotsPanel(false);
@@ -4417,7 +4477,10 @@ const App: React.FC = () => {
               debugMode={debugModeEnabled}
               parentRepo={repoHistory.length > 0 ? repoHistory[repoHistory.length - 1] : null}
               repoHistoryDepth={repoHistory.length}
-              onBackToParent={repoHistory.length > 0 ? () => {
+              onBackToParent={repoHistory.length > 0 ? async () => {
+                // Store submodule path before switching (for change detection)
+                const submodulePath = currentRepo?.submodulePath;
+
                 // Pop the last repo from history and navigate to it
                 const newHistory = [...repoHistory];
                 const parent = newHistory.pop()!;
@@ -4427,7 +4490,86 @@ const App: React.FC = () => {
                 // Reset state for fresh load
                 setBranches([]);
                 setCommits([]);
+                // Clear undo state when switching back from submodule to parent
+                clearUndo();
+                // Clear UI selection states
+                setSelectedCommit(null);
+                setSelectedCommits([]);
+                setContextMenu(null);
+                setIsPanelOpen(false);
+                // Close any open panels/modals
+                setShowSubmodulesPanel(false);
+                setShowStashPanel(false);
+                setShowInteractiveRebase(false);
+                setShowSnapshotsPanel(false);
+                setShowWorktreesPanel(false);
+                setShowGitflowPanel(false);
+                setShowSquashDialog(false);
+                setReorderDialog(null);
+                setCherryPickDialog(null);
+                setAmendDialog(null);
+                setRevertDialog(null);
+                setUndoCommitDialog(null);
                 setCurrentRepo(parent);
+
+                // Check if submodule has uncommitted changes in parent
+                if (submodulePath && parent) {
+                  try {
+                    const status = await getSubmoduleStatus(parent, submodulePath);
+                    if (status.modified) {
+                      const commitMsg = status.newCommits > 0
+                        ? `${status.newCommits} new commit${status.newCommits > 1 ? 's' : ''} in submodule`
+                        : 'Submodule reference changed';
+
+                      addToast({
+                        type: 'info',
+                        title: 'Submodule Updated',
+                        message: `${commitMsg}. Commit the change to update the parent repo's reference.`,
+                        duration: 0, // Persistent
+                        actions: [
+                          {
+                            label: 'Stage & Commit',
+                            variant: 'primary',
+                            onClick: async () => {
+                              try {
+                                // Stage the submodule
+                                await gitStage(parent, submodulePath);
+                                // Refresh to update working directory status
+                                await refreshRepoData();
+                                // Show commit panel by selecting the WIP node
+                                setSelectedCommit(null);
+                                setIsPanelOpen(true);
+                                addToast({
+                                  type: 'success',
+                                  title: 'Submodule Staged',
+                                  message: 'Submodule change staged. Enter a commit message to complete.',
+                                  duration: 4000,
+                                });
+                              } catch (e: any) {
+                                addToast({
+                                  type: 'error',
+                                  title: 'Stage Failed',
+                                  message: e.message || 'Failed to stage submodule',
+                                  duration: 5000,
+                                });
+                              }
+                            }
+                          },
+                          {
+                            label: 'Review',
+                            variant: 'secondary',
+                            onClick: () => {
+                              // Just refresh to show the changes
+                              refreshRepoData();
+                            }
+                          }
+                        ]
+                      });
+                    }
+                  } catch (e) {
+                    console.warn('Failed to check submodule status:', e);
+                  }
+                }
               } : undefined}
               undoButton={
                 <UndoButton repo={currentRepo} onRefresh={refreshRepoData} undoState={undoState} onUndo={handleUndo} redoState={redoState} onRedo={handleRedo} />
@@ -4452,6 +4594,8 @@ const App: React.FC = () => {
                 onFileHistory={(filepath) => setFileHistoryView({ filepath })}
                 onEditFile={(filepath) => setFileEditorView({ filepath })}
                 recentMessages={commits.slice(0, 50).map(c => c.message)}
+                isCommitSectionMinimized={isCommitSectionMinimized}
+                onToggleCommitSectionMinimize={() => setIsCommitSectionMinimized(prev => !prev)}
               />
           )}
 
@@ -4488,6 +4632,7 @@ const App: React.FC = () => {
             onUpdateProfile={(p) => setActiveProfile(p)}
             onSwitchProfile={handleSwitchProfile}
             onClose={() => { setShowSettings(false); setDebugModeEnabled(isDebugMode()); }}
+            onReportIssue={() => setShowIssueReporter(true)}
         />
       )}
       {showMergeTool && <MergeTool config={aiConfig} repo={currentRepo} onResolved={() => { setShowMergeTool(false); refreshRepoData(); }} onClose={() => setShowMergeTool(false)} />}
@@ -4577,7 +4722,7 @@ const App: React.FC = () => {
       />
 
       {/* Beautiful Dialogs */}
-      {cherryPickDialog && (
+      {cherryPickDialog?.isOpen && (
         <CherryPickDialog
           isOpen={cherryPickDialog.isOpen}
           commitCount={cherryPickDialog.commitCount}
@@ -4587,7 +4732,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {reorderDialog && (
+      {reorderDialog?.isOpen && (
         <ReorderCommitsDialog
           isOpen={reorderDialog.isOpen}
           commitCount={reorderDialog.commitCount}
@@ -4640,7 +4785,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {alertDialog && (
+      {alertDialog?.isOpen && (
         <AlertDialog
           isOpen={alertDialog.isOpen}
           title={alertDialog.title}
@@ -4668,7 +4813,7 @@ const App: React.FC = () => {
       )}
 
       {/* Empty Cherry-Pick Dialog */}
-      {emptyCherryPickDialog?.isOpen && (
+      {emptyCherryPickDialog?.isOpen && emptyCherryPickDialog && (
         <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-gk-panel border border-gk-header rounded-xl p-6 max-w-md w-full shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
@@ -4676,7 +4821,7 @@ const App: React.FC = () => {
               <h2 className="text-lg font-bold text-white">Empty Cherry-Pick</h2>
             </div>
             <p className="text-gray-300 text-sm mb-2">
-              The cherry-pick for commit <span className="font-mono text-gk-yellow">{emptyCherryPickDialog.commitSha.substring(0, 7)}</span> resulted in no changes.
+              The cherry-pick for commit <span className="font-mono text-gk-yellow">{emptyCherryPickDialog?.commitSha?.substring(0, 7)}</span> resulted in no changes.
             </p>
             <p className="text-gray-400 text-xs mb-4">
               This typically happens when the conflict resolution produced content identical to the current state. Choose how to proceed:
@@ -4728,7 +4873,7 @@ const App: React.FC = () => {
       )}
 
       {/* Conflict Warning Dialog */}
-      {conflictWarning.isOpen && (
+      {conflictWarning?.isOpen && (
         <AlertDialog
           isOpen={conflictWarning.isOpen}
           title="⚠️ Potential Conflicts Detected"
@@ -4773,7 +4918,7 @@ const App: React.FC = () => {
       )}
 
       {/* Amend Commit Dialog */}
-      {amendDialog.isOpen && (
+      {amendDialog?.isOpen && (
         <AlertDialog
           isOpen={amendDialog.isOpen}
           title="Amend Last Commit"
@@ -4817,7 +4962,7 @@ const App: React.FC = () => {
       )}
 
       {/* Undo Commit Dialog */}
-      {undoCommitDialog.isOpen && (
+      {undoCommitDialog?.isOpen && (
         <AlertDialog
           isOpen={undoCommitDialog.isOpen}
           title="Undo Last Commit"
@@ -4858,7 +5003,7 @@ const App: React.FC = () => {
       )}
 
       {/* Revert Commit Dialog */}
-      {revertDialog.isOpen && (
+      {revertDialog?.isOpen && (
         <AlertDialog
           isOpen={revertDialog.isOpen}
           title="Revert Commit"
@@ -4900,7 +5045,7 @@ const App: React.FC = () => {
       )}
 
       {/* Gitflow Initialization Dialog */}
-      {gitflowDialog.isOpen && (
+      {gitflowDialog?.isOpen && (
         <AlertDialog
           isOpen={gitflowDialog.isOpen}
           title="Initialize Gitflow"
@@ -4943,7 +5088,7 @@ const App: React.FC = () => {
       )}
 
       {/* Discard All Changes Dialog */}
-      {discardAllDialog.isOpen && (
+      {discardAllDialog?.isOpen && (
         <AlertDialog
           isOpen={discardAllDialog.isOpen}
           title="⚠️ Discard All Changes"
@@ -4983,7 +5128,7 @@ const App: React.FC = () => {
       )}
 
       {/* Checkout Commit Dialog */}
-      {checkoutDialog.isOpen && (
+      {checkoutDialog?.isOpen && (
         <AlertDialog
           isOpen={checkoutDialog.isOpen}
           title="Checkout Commit"
@@ -5156,6 +5301,7 @@ const App: React.FC = () => {
                 isLocal: true, // Explicitly ensure local repo
                 default_branch: 'HEAD', // Let it detect the active branch
                 owner: undefined, // Clear GitHub-specific owner
+                submodulePath: submodulePath, // Store relative path for change detection
               });
             }
           }}
@@ -5228,6 +5374,14 @@ const App: React.FC = () => {
           onClose={() => setShowDebugPanel(false)}
         />
       )}
+
+      {/* Issue Reporter */}
+      <IssueReporter
+        isOpen={showIssueReporter}
+        onClose={() => setShowIssueReporter(false)}
+        githubToken={activeProfile?.githubToken || ''}
+        appVersion={CURRENT_VERSION}
+      />
 
       {/* Merge Preview Modal */}
       {showMergePreview && mergePreviewData && (

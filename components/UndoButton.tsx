@@ -25,13 +25,13 @@ interface RedoState {
 interface UndoButtonProps {
   repo: Repository | null;
   onRefresh: () => void;
-  undoState: UndoState;
+  undoState: UndoState | ((repo: Repository | null) => UndoState);
   onUndo?: () => Promise<void>;
-  redoState?: RedoState;
+  redoState?: RedoState | ((repo: Repository | null) => RedoState);
   onRedo?: () => Promise<void>;
 }
 
-const UndoButton: React.FC<UndoButtonProps> = ({ repo, onRefresh, undoState, onUndo, redoState, onRedo }) => {
+const UndoButton: React.FC<UndoButtonProps> = ({ repo, onRefresh, undoState: undoStateProp, onUndo, redoState: redoStateProp, onRedo }) => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
   const [alert, setAlert] = useState<{
@@ -41,6 +41,10 @@ const UndoButton: React.FC<UndoButtonProps> = ({ repo, onRefresh, undoState, onU
     details?: string;
     type: 'success' | 'error' | 'info';
   }>({ isOpen: false, title: '', message: '', type: 'info' });
+
+  // Resolve undo/redo state (handle both function and object formats)
+  const undoState = typeof undoStateProp === 'function' ? undoStateProp(repo) : undoStateProp;
+  const redoState = typeof redoStateProp === 'function' ? redoStateProp(repo) : redoStateProp;
 
   // Check current branch to validate undo
   useEffect(() => {

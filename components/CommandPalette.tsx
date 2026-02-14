@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, GitBranch, GitCommit, Archive, Settings, Sparkles, ArrowDown, ArrowUp, Plus, RotateCcw, Tag, FileText, Clock, Eye, History, Filter, FolderTree, Camera, GitFork, FilePlus, Send, Users, GitPullRequest, Download } from 'lucide-react';
+import { Search, GitBranch, GitCommit, Archive, Settings, Sparkles, ArrowDown, ArrowUp, Plus, RotateCcw, Tag, FileText, Clock, Eye, History, Filter, FolderTree, Camera, GitFork, FilePlus, Send, Users, GitPullRequest, Download, Bug } from 'lucide-react';
 
 export interface Command {
   id: string;
@@ -197,6 +197,7 @@ export function createAppCommands({
   onOpenSnapshotsPanel, onCreateSnapshot, onOpenSubmodulesPanel,
   onInteractiveRebase, onCherryPickCommit, onGenerateAICommitMessage,
   onCreateFile, onCommitAndPush, onOpenWorktrees, onCheckForUpdates,
+  onReportIssue,
   isLocal, branches
 }: {
   onPull?: () => void;
@@ -226,6 +227,7 @@ export function createAppCommands({
   onCommitAndPush?: () => void;
   onOpenWorktrees?: () => void;
   onCheckForUpdates?: () => void;
+  onReportIssue?: () => void;
   isLocal: boolean;
   branches?: { name: string; isRemote: boolean; active?: boolean }[];
 }): Command[] {
@@ -410,6 +412,17 @@ export function createAppCommands({
       icon: <Download className="w-4 h-4" />,
       action: onCheckForUpdates,
       keywords: ['update', 'upgrade', 'version', 'release']
+    });
+  }
+
+  if (onReportIssue) {
+    cmds.push({
+      id: 'report-issue',
+      label: 'Report Issue / Feature Request',
+      group: 'Help',
+      icon: <Bug className="w-4 h-4" />,
+      action: onReportIssue,
+      keywords: ['bug', 'issue', 'report', 'feature', 'request', 'feedback', 'github']
     });
   }
 

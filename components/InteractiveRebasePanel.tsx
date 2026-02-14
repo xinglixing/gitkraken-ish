@@ -53,25 +53,54 @@ export const InteractiveRebasePanel: React.FC<InteractiveRebasePanelProps> = ({
     }
   }, [isOpen, commits]);
 
-  const handleDragStart = (index: number) => {
+  const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
+    // Required for Firefox and some browsers
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+    // Set a transparent drag image or hide the default ghost
+    const dragImage = document.createElement('div');
+    dragImage.style.opacity = '0';
+    document.body.appendChild(dragImage);
+    e.dataTransfer.setDragImage(dragImage, 0, 0);
+    setTimeout(() => document.body.removeChild(dragImage), 0);
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
     if (draggedIndex !== null && draggedIndex !== index) {
       setDropIndex(index);
     }
   };
 
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    // Only clear drop index if we're leaving the container
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (!relatedTarget?.closest('.commits-list')) {
+      setDropIndex(null);
+    }
+  };
+
   const handleDrop = (e: React.DragEvent, targetIndex: number) => {
     e.preventDefault();
-    if (draggedIndex === null || draggedIndex === targetIndex) return;
+    e.stopPropagation();
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDropIndex(null);
+      return;
+    }
 
     const newCommits = [...rebaseCommits];
     const [removed] = newCommits.splice(draggedIndex, 1);
     newCommits.splice(targetIndex, 0, removed);
     setRebaseCommits(newCommits);
+    setDraggedIndex(null);
+    setDropIndex(null);
+  };
+
+  const handleDragEnd = () => {
     setDraggedIndex(null);
     setDropIndex(null);
   };
@@ -178,14 +207,18 @@ export const InteractiveRebasePanel: React.FC<InteractiveRebasePanelProps> = ({
       </div>
 
       {/* Commits List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+      <div
+        className="flex-1 overflow-y-auto p-2 space-y-1 commits-list"
+        onDragLeave={handleDragLeave}
+      >
         {rebaseCommits.map((commit, index) => (
           <div
             key={commit.id}
             draggable
-            onDragStart={() => handleDragStart(index)}
+            onDragStart={(e) => handleDragStart(e, index)}
             onDragOver={(e) => handleDragOver(e, index)}
             onDrop={(e) => handleDrop(e, index)}
+            onDragEnd={handleDragEnd}
             className={`group flex items-center gap-2 p-2 rounded-lg border transition-all ${
               draggedIndex === index
                 ? 'opacity-50'

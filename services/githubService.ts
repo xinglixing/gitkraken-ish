@@ -355,3 +355,134 @@ export const fetchJobLogs = async (token: string, owner: string, repo: string, j
     if (!response.ok) throw new Error('Failed to fetch job logs');
     return await response.text();
 };
+
+export interface IssueTemplate {
+    type: 'bug' | 'feature' | 'task';
+    title: string;
+    body: string;
+    labels: string[];
+}
+
+export interface UploadedImage {
+    url: string;
+    name: string;
+}
+
+/**
+ * Upload an image to GitHub for use in an issue
+ * Uses GitHub's content API to upload to a temp location
+ */
+export const uploadImageToGitHub = async (
+    token: string,
+    owner: string,
+    repo: string,
+    file: File
+): Promise<UploadedImage> => {
+    // Read file as base64
+    const reader = new FileReader();
+    const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+            const result = reader.result as string;
+            // Remove data:image/png;base64, prefix
+            const base64 = result.split(',')[1];
+            resolve(base64);
+        };
+        reader.onerror = reject;
+    });
+    reader.readAsDataURL(file);
+    const base64Content = await base64Promise;
+
+    // Create a unique filename
+    const timestamp = Date.now();
+    const filename = `issue-attachment-${timestamp}-${file.name}`;
+    const path = `.github/temp-attachments/${filename}`;
+
+    // Upload to repo
+    const response = await fetch(`${BASE_URL}/repos/${owner}/${repo}/contents/${path}`, {
+        method: 'PUT',
+        headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            message: `Upload attachment for issue: ${file.name}`,
+            content: base64Content,
+            branch: 'main',
+        }),
+    });
+
+    if (!response.ok) {
+        // Try without branch if main doesn't exist
+        const error = await response.json();
+        if (error.message?.includes('Branch not found')) {
+            throw new Error('Cannot upload images: default branch not found. Please upload images manually.');
+        }
+        throw new Error(`Failed to upload image: ${error.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+        url: data.content.download_url,
+        name: file.name,
+    };
+};
+
+/**
+ * Create a GitHub issue with optional image attachments
+ */
+export const createIssueWithAttachments = async (
+    token: string,
+    owner: string,
+    repo: string,
+    issue: IssueTemplate,
+    images?: UploadedImage[]
+): Promise<{ html_url: string; number: number }> => {
+    // Build body with image attachments
+    let body = issue.body;
+    if (images && images.length > 0) {
+        body += '\n\n## Screenshots / Attachments\n';
+        images.forEach(img => {
+            body += `\n![${img.name}](${img.url})\n`;
+        });
+    }
+
+    const response = await fetch(`${BASE_URL}/repos/${owner}/${repo}/issues`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            title: issue.title,
+            body: body,
+            labels: issue.labels,
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `Failed to create issue: ${response.status}`);
+    }
+
+    return await response.json();
+};
+
+/**
+ * Get current GitHub user info
+ */
+export const getCurrentUser = async (token: string): Promise<{ login: string; avatar_url: string }> => {
+    const response = await fetch(`${BASE_URL}/user`, {
+        headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error('Invalid GitHub token');
+    }
+
+    return await response.json();
+};

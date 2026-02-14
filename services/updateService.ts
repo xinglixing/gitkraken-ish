@@ -22,7 +22,7 @@ export interface UpdateCheckResult {
 }
 
 // Current app version - update this when releasing new versions
-export const CURRENT_VERSION = '1.0.18';
+export const CURRENT_VERSION = '1.0.19';
 
 // GitHub repository info - update these to match your repo
 const GITHUB_OWNER = 'xinglixing';

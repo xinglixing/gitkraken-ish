@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Check, Key, MessageSquare, User as UserIcon, Plus, Trash2, LogOut, Github, Shield, Cpu, Settings, Keyboard, Bug, Download, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Check, Key, MessageSquare, User as UserIcon, Plus, Trash2, LogOut, Github, Shield, Cpu, Settings, Keyboard, Bug, Download, RefreshCw, CheckCircle, AlertCircle, FlaskConical, Send } from 'lucide-react';
 import { AIConfig, AIProvider, Profile, User, ShellPreference } from '../types';
 import { getProfiles, saveProfile, deleteProfile, setActiveProfileId, createProfile, isDuplicateProfile, clearAllProfileData, clearProfileSpecificData } from '../services/profileService';
 import { validateToken } from '../services/githubService';
@@ -16,9 +16,10 @@ interface SettingsModalProps {
   onUpdateProfile: (profile: Profile) => void;
   onSwitchProfile: (profileId: string) => void;
   onClose: () => void;
+  onReportIssue?: () => void;
 }
 
-type Tab = 'profiles' | 'ai' | 'general' | 'shortcuts' | 'debug' | 'updates';
+type Tab = 'profiles' | 'ai' | 'general' | 'shortcuts' | 'debug' | 'updates' | 'experimental';
 
 interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -28,8 +29,8 @@ interface UpdateState {
   error?: string;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ 
-  config, activeProfile, onSaveConfig, onUpdateProfile, onSwitchProfile, onClose 
+const SettingsModal: React.FC<SettingsModalProps> = ({
+  config, activeProfile, onSaveConfig, onUpdateProfile, onSwitchProfile, onClose, onReportIssue
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('profiles');
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -281,6 +282,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 className={`flex items-center px-4 py-2 rounded text-sm mb-1 ${activeTab === 'updates' ? 'bg-gk-green/10 text-gk-green font-bold' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
             >
                 <Download className="w-4 h-4 mr-2" /> Updates
+            </button>
+            <button
+                onClick={() => setActiveTab('experimental')}
+                className={`flex items-center px-4 py-2 rounded text-sm mb-1 ${activeTab === 'experimental' ? 'bg-gk-accent/10 text-gk-accent font-bold' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <FlaskConical className="w-4 h-4 mr-2" /> Experimental
             </button>
         </div>
 
@@ -729,6 +736,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div>
+                            <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Report Issues</h3>
+                            <div className="p-4 bg-white/5 rounded-lg border border-white/5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-sm font-medium text-gray-200">Found a bug or have a feature request?</div>
+                                        <div className="text-xs text-gray-500">Submit an issue directly to our GitHub repository</div>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            onClose();
+                                            onReportIssue?.();
+                                        }}
+                                        className="flex items-center px-4 py-2 bg-gk-accent hover:bg-opacity-90 text-gk-bg font-bold rounded transition-colors text-sm"
+                                    >
+                                        <Send className="w-4 h-4 mr-2" />
+                                        Report Issue
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
                             <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Information</h3>
                             <div className="p-4 bg-white/5 rounded-lg border border-white/5 space-y-2">
                                 <p className="text-sm text-gray-300">When debug mode is enabled, all Git operations and AI requests are logged to the Debug Panel.</p>
@@ -877,6 +906,43 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             <div className="p-4 bg-white/5 rounded-lg border border-white/5 space-y-2">
                                 <p className="text-sm text-gray-300">Updates are downloaded from GitHub releases.</p>
                                 <p className="text-sm text-gray-400">After installing an update, the app will restart automatically.</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- EXPERIMENTAL TAB --- */}
+                {activeTab === 'experimental' && (
+                    <div className="space-y-6">
+                        <div className="p-4 bg-gk-accent/5 border border-gk-accent/20 rounded-lg">
+                            <div className="flex items-start">
+                                <FlaskConical className="w-5 h-5 text-gk-accent mr-3 mt-0.5" />
+                                <div>
+                                    <h3 className="text-sm font-bold text-gk-accent">Experimental Features</h3>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        These features are in development and may have bugs or unexpected behavior.
+                                        Enable at your own risk.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Submodule Features */}
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-400 uppercase mb-4">Submodule Management</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/5">
+                                    <div>
+                                        <div className="text-sm font-medium text-gray-200">Enable Submodule Features</div>
+                                        <div className="text-xs text-gray-500">Access submodule management panel and related functionality</div>
+                                    </div>
+                                    <button
+                                        onClick={() => setLocalConfig({...localConfig, enableSubmoduleFeatures: !localConfig.enableSubmoduleFeatures})}
+                                        className={`w-12 h-6 rounded-full transition-colors relative ${localConfig.enableSubmoduleFeatures ? 'bg-gk-accent' : 'bg-gray-600'}`}
+                                    >
+                                        <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${localConfig.enableSubmoduleFeatures ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

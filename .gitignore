@@ -53,6 +53,7 @@ ehthumbs.db
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~

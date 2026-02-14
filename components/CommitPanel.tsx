@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Commit, AIConfig, Repository, FileChange, Profile, GitOperationError } from '../types';
-import { X, FileText, Hash, User, Calendar, Sparkles, Wand2, ArrowUpCircle, Archive, PlusCircle, MinusCircle, Eye, Copy, Check, Clock, ChevronDown, Trash2, Search, Send, Users, Filter, FilePlus, ToggleLeft, ToggleRight, Loader2, CheckCircle, FolderOpen, Pencil } from 'lucide-react';
+import { X, FileText, Hash, User, Calendar, Sparkles, Wand2, ArrowUpCircle, Archive, PlusCircle, MinusCircle, Eye, Copy, Check, Clock, ChevronDown, Trash2, Search, Send, Users, Filter, FilePlus, ToggleLeft, ToggleRight, Loader2, CheckCircle, FolderOpen, Pencil, Minimize2, Maximize2 } from 'lucide-react';
 import { explainCommit, generateCommitMessage, generateStashMessage, reviewChanges, improveCommitMessage } from '../services/aiService';
 import { fetchCommitDetails } from '../services/githubService';
-import { fetchLocalCommitDetails, fetchWorkingDir, gitStage, gitUnstage, gitStageAll, gitUnstageAll, gitCommit, gitStash, gitStashFile, gitGetFileContent, gitGetWorkingFileContent, gitStageHunk, gitStageLine, gitDiscardFile, gitCommitAndPush, gitCommitWithOptions, gitListAllFiles, gitCreateFile } from '../services/localGitService';
+import { fetchLocalCommitDetails, fetchWorkingDir, gitStage, gitUnstage, gitStageAll, gitUnstageAll, gitCommit, gitStash, gitStashFile, gitGetFileContent, gitGetWorkingFileContent, gitStageHunk, gitStageLine, gitDiscardFile, gitCommitAndPush, gitCommitWithOptions, gitListAllFiles, gitCreateFile, listSubmodules } from '../services/localGitService';
 import DiffView from './DiffView';
 import AlertDialog from './AlertDialog';
 import ConfirmDialog from './ConfirmDialog';
@@ -31,9 +31,11 @@ interface CommitPanelProps {
   onFileHistory?: (filepath: string) => void;
   onEditFile?: (filepath: string) => void;
   recentMessages?: string[];
+  isCommitSectionMinimized?: boolean;
+  onToggleCommitSectionMinimize?: () => void;
 }
 
-const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, githubToken, repository, refreshGraph, activeProfile, onBlame, onFileHistory, onEditFile, recentMessages = [] }) => {
+const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, githubToken, repository, refreshGraph, activeProfile, onBlame, onFileHistory, onEditFile, recentMessages = [], isCommitSectionMinimized = false, onToggleCommitSectionMinimize }) => {
   const [explanation, setExplanation] = useState<string | null>(null);
   const [suggestedMessage, setSuggestedMessage] = useState<string | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
@@ -66,6 +68,7 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
   const [newFilePath, setNewFilePath] = useState('');
   const [operatingFiles, setOperatingFiles] = useState<Set<string>>(new Set()); // Track files being staged/unstaged
   const [isCommitting, setIsCommitting] = useState(false); // Track commit operation
+  const [submodulePaths, setSubmodulePaths] = useState<Set<string>>(new Set()); // Track submodule paths
 
   // AI Code Review state
   const [codeReview, setCodeReview] = useState<{
@@ -83,6 +86,25 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
     type: 'success' | 'error' | 'info';
   }>({ isOpen: false, title: '', message: '', type: 'info' });
   const { dialogState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
+
+  // Load submodule paths when repository changes
+  useEffect(() => {
+      if (repository?.isLocal) {
+          listSubmodules(repository)
+              .then(submodules => {
+                  setSubmodulePaths(new Set(submodules.map(s => s.path.replace(/\\/g, '/'))));
+              })
+              .catch(() => setSubmodulePaths(new Set()));
+      } else {
+          setSubmodulePaths(new Set());
+      }
+  }, [repository]);
+
+  // Helper function to check if a path is a submodule directory
+  const isSubmodulePath = (filepath: string): boolean => {
+      const normalizedPath = filepath.replace(/\\/g, '/');
+      return submodulePaths.has(normalizedPath);
+  };
 
   // Load WIP files if no commit selected
   useEffect(() => {
@@ -673,11 +695,11 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
                          </button>
                          <span className="flex-1 truncate text-gray-300">{f.filename}</span>
                          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                           {onEditFile && <button onClick={() => onEditFile(f.filename)} className="text-gray-500 hover:text-gk-accent" title="Edit file"><Pencil className="w-3 h-3" /></button>}
-                           {onBlame && <button onClick={() => onBlame(f.filename)} className="text-gray-500 hover:text-gk-purple" title="View blame annotations"><Eye className="w-3 h-3" /></button>}
-                           {onFileHistory && <button onClick={() => onFileHistory(f.filename)} className="text-gray-500 hover:text-gk-blue" title="View file history"><Clock className="w-3 h-3" /></button>}
-                           <button onClick={() => setViewingDiff(f)} className="text-gray-500 hover:text-white" title="View changes"><Eye className="w-3.5 h-3.5" /></button>
-                           <button onClick={() => handleStashFile(f)} className="text-gray-500 hover:text-gk-accent" title="Stash this file"><Archive className="w-3 h-3" /></button>
+                           {onEditFile && !isSubmodulePath(f.filename) && <button onClick={() => onEditFile(f.filename)} className="text-gray-500 hover:text-gk-accent" title="Edit file"><Pencil className="w-3 h-3" /></button>}
+                           {onBlame && !isSubmodulePath(f.filename) && <button onClick={() => onBlame(f.filename)} className="text-gray-500 hover:text-gk-purple" title="View blame annotations"><Eye className="w-3 h-3" /></button>}
+                           {onFileHistory && !isSubmodulePath(f.filename) && <button onClick={() => onFileHistory(f.filename)} className="text-gray-500 hover:text-gk-blue" title="View file history"><Clock className="w-3 h-3" /></button>}
+                           {!isSubmodulePath(f.filename) && <button onClick={() => setViewingDiff(f)} className="text-gray-500 hover:text-white" title="View changes"><Eye className="w-3.5 h-3.5" /></button>}
+                           {!isSubmodulePath(f.filename) && <button onClick={() => handleStashFile(f)} className="text-gray-500 hover:text-gk-accent" title="Stash this file"><Archive className="w-3 h-3" /></button>}
                            <button onClick={() => handleDiscardFile(f)} className="text-gray-500 hover:text-red-400" title="Discard changes (cannot be undone)"><Trash2 className="w-3 h-3" /></button>
                          </div>
                      </div>
@@ -717,8 +739,17 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
                        <ChevronDown className="w-3 h-3 mr-1" />
                        Template
                      </button>
+                     <button
+                       onClick={onToggleCommitSectionMinimize}
+                       className="text-[10px] text-gray-400 hover:text-white flex items-center px-1.5 py-0.5 rounded hover:bg-white/10"
+                       title={isCommitSectionMinimized ? "Expand commit section" : "Minimize commit section"}
+                     >
+                       {isCommitSectionMinimized ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+                     </button>
                    </div>
                  </div>
+                 {!isCommitSectionMinimized && (
+                 <>
                  {showTemplatePanel && (
                    <div className="mb-2">
                      <CommitTemplatePanel
@@ -912,6 +943,14 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
                        )}
                    </button>
                  </div>
+                 </>
+                 )}
+                 {/* Show message when minimized */}
+                 {isCommitSectionMinimized && commitMsg.trim() && (
+                   <div className="mt-2 p-2 bg-gk-bg/50 rounded text-xs text-gray-400 truncate">
+                     <span className="text-gray-500">Message:</span> {commitMsg}
+                   </div>
+                 )}
              </div>
           </div>
           )}
@@ -1177,7 +1216,11 @@ const CommitPanel: React.FC<CommitPanelProps> = ({ commit, onClose, aiConfig, gi
                      <div className="text-gk-red text-sm bg-gk-red/10 p-2 rounded">{detailsError}</div>
                 )}
                 {(!fullCommit.changes || fullCommit.changes.length === 0) && !loadingDetails && !detailsError && (
-                     <div className="text-gray-600 text-sm italic">No file changes available.</div>
+                     <div className="text-gray-600 text-sm italic">
+                        {fullCommit.detailsUnavailable
+                            ? "Commit details temporarily unavailable (shallow clone or during rebase)"
+                            : "No file changes available."}
+                     </div>
                 )}
             </div>
         </div>

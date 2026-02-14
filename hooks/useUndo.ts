@@ -1,8 +1,9 @@
 /**
- * Undo/Redo Hook
- * Manages undo and redo state for Git operations
+ * Undo/Redo Hook with Per-Repository Support
+ * Manages undo and redo state for Git operations, with each repository having its own history
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import { Repository } from '../types';
 
 export type GitOperation =
   | 'cherry-pick'
@@ -42,36 +43,62 @@ export interface RedoState {
   details: string | null;
 }
 
+// Key for storing undo/redo stacks - uses repo path as unique identifier
+const getRepoKey = (repo: Repository | null): string => {
+  if (!repo) return '';
+  return repo.path || repo.full_name || String(repo.id);
+};
+
 export const useUndo = () => {
-  const [undoStack, setUndoStack] = useState<OperationState[]>([]);
-  const [redoStack, setRedoStack] = useState<OperationState[]>([]);
+  // Store undo/redo stacks per repository (keyed by repo path)
+  const [undoStacks, setUndoStacks] = useState<Map<string, OperationState[]>>(new Map());
+  const [redoStacks, setRedoStacks] = useState<Map<string, OperationState[]>>(new Map());
 
-  // Derived state for backwards compatibility
-  const undoState: UndoState = {
-    canUndo: undoStack.length > 0,
-    lastOperation: undoStack.length > 0 ? undoStack[undoStack.length - 1].operation : null,
-    beforeState: undoStack.length > 0 ? undoStack[undoStack.length - 1].beforeState : null,
-    afterState: undoStack.length > 0 ? undoStack[undoStack.length - 1].afterState : null,
-    branchBefore: undoStack.length > 0 ? undoStack[undoStack.length - 1].branchBefore : null,
-    details: undoStack.length > 0 ? undoStack[undoStack.length - 1].details : null,
-  };
+  // Get current repo's undo/redo stacks
+  const getRepoStacks = useCallback((repo: Repository | null) => {
+    const key = getRepoKey(repo);
+    return {
+      undo: undoStacks.get(key) || [],
+      redo: redoStacks.get(key) || [],
+    };
+  }, [undoStacks, redoStacks]);
 
-  const redoState: RedoState = {
-    canRedo: redoStack.length > 0,
-    lastOperation: redoStack.length > 0 ? redoStack[redoStack.length - 1].operation : null,
-    beforeState: redoStack.length > 0 ? redoStack[redoStack.length - 1].beforeState : null,
-    afterState: redoStack.length > 0 ? redoStack[redoStack.length - 1].afterState : null,
-    branchBefore: redoStack.length > 0 ? redoStack[redoStack.length - 1].branchBefore : null,
-    details: redoStack.length > 0 ? redoStack[redoStack.length - 1].details : null,
-  };
+  // Derived state for current repo
+  const getUndoState = useCallback((repo: Repository | null): UndoState => {
+    const { undo } = getRepoStacks(repo);
+    return {
+      canUndo: undo.length > 0,
+      lastOperation: undo.length > 0 ? undo[undo.length - 1].operation : null,
+      beforeState: undo.length > 0 ? undo[undo.length - 1].beforeState : null,
+      afterState: undo.length > 0 ? undo[undo.length - 1].afterState : null,
+      branchBefore: undo.length > 0 ? undo[undo.length - 1].branchBefore : null,
+      details: undo.length > 0 ? undo[undo.length - 1].details : null,
+    };
+  }, [getRepoStacks]);
+
+  const getRedoState = useCallback((repo: Repository | null): RedoState => {
+    const { redo } = getRepoStacks(repo);
+    return {
+      canRedo: redo.length > 0,
+      lastOperation: redo.length > 0 ? redo[redo.length - 1].operation : null,
+      beforeState: redo.length > 0 ? redo[redo.length - 1].beforeState : null,
+      afterState: redo.length > 0 ? redo[redo.length - 1].afterState : null,
+      branchBefore: redo.length > 0 ? redo[redo.length - 1].branchBefore : null,
+      details: redo.length > 0 ? redo[redo.length - 1].details : null,
+    };
+  }, [getRepoStacks]);
 
   const recordOperation = useCallback((
+    repo: Repository | null,
     operation: GitOperation,
     beforeSha: string,
     afterSha: string,
     details: string,
     branchBefore?: string
   ) => {
+    const key = getRepoKey(repo);
+    if (!key) return;
+
     const newOp: OperationState = {
       operation,
       beforeState: beforeSha,
@@ -80,22 +107,56 @@ export const useUndo = () => {
       details,
     };
 
-    setUndoStack(prev => [...prev, newOp]);
-    // Clear redo stack when new operation is performed
-    setRedoStack([]);
+    setUndoStacks(prev => {
+      const newStacks = new Map(prev);
+      const currentStack = newStacks.get(key) || [];
+      newStacks.set(key, [...currentStack, newOp]);
+      return newStacks;
+    });
+
+    // Clear redo stack for this repo when new operation is performed
+    setRedoStacks(prev => {
+      const newStacks = new Map(prev);
+      newStacks.delete(key);
+      return newStacks;
+    });
   }, []);
 
-  const clearUndo = useCallback(() => {
-    setUndoStack([]);
-    setRedoStack([]);
+  const clearUndo = useCallback((repo?: Repository | null) => {
+    if (repo) {
+      // Clear only for specific repo
+      const key = getRepoKey(repo);
+      setUndoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.delete(key);
+        return newStacks;
+      });
+      setRedoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.delete(key);
+        return newStacks;
+      });
+    } else {
+      // Clear all
+      setUndoStacks(new Map());
+      setRedoStacks(new Map());
+    }
   }, []);
 
-  const performUndo = useCallback(async (repo: any, gitReset: any, gitCheckout: any) => {
-    if (undoStack.length === 0) {
+  const performUndo = useCallback(async (
+    repo: Repository | null,
+    gitReset: (repo: any, ref: string, mode: 'hard') => Promise<void>,
+    gitCheckout: (repo: any, branch: string) => Promise<void>
+  ) => {
+    const key = getRepoKey(repo);
+    if (!key) throw new Error('No repository selected');
+
+    const { undo, redo } = getRepoStacks(repo);
+    if (undo.length === 0) {
       throw new Error('Nothing to undo');
     }
 
-    const lastOp = undoStack[undoStack.length - 1];
+    const lastOp = undo[undo.length - 1];
 
     try {
       // Reset to before state
@@ -107,44 +168,76 @@ export const useUndo = () => {
       }
 
       // Move operation to redo stack
-      setRedoStack(prev => [...prev, lastOp]);
-      setUndoStack(prev => prev.slice(0, -1));
+      setUndoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.set(key, undo.slice(0, -1));
+        return newStacks;
+      });
+
+      setRedoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.set(key, [...redo, lastOp]);
+        return newStacks;
+      });
 
       return true;
-    } catch (e) {
+    } catch (e: any) {
       throw new Error(`Undo failed: ${e.message}`);
     }
-  }, [undoStack]);
+  }, [getRepoStacks]);
 
-  const performRedo = useCallback(async (repo: any, gitReset: any, gitCheckout: any) => {
-    if (redoStack.length === 0) {
+  const performRedo = useCallback(async (
+    repo: Repository | null,
+    gitReset: (repo: any, ref: string, mode: 'hard') => Promise<void>,
+    gitCheckout: (repo: any, branch: string) => Promise<void>
+  ) => {
+    const key = getRepoKey(repo);
+    if (!key) throw new Error('No repository selected');
+
+    const { undo, redo } = getRepoStacks(repo);
+    if (redo.length === 0) {
       throw new Error('Nothing to redo');
     }
 
-    const lastOp = redoStack[redoStack.length - 1];
+    const lastOp = redo[redo.length - 1];
 
     try {
       // Reset to after state (redo the operation)
       await gitReset(repo, lastOp.afterState, 'hard');
 
       // Move operation back to undo stack
-      setUndoStack(prev => [...prev, lastOp]);
-      setRedoStack(prev => prev.slice(0, -1));
+      setRedoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.set(key, redo.slice(0, -1));
+        return newStacks;
+      });
+
+      setUndoStacks(prev => {
+        const newStacks = new Map(prev);
+        newStacks.set(key, [...undo, lastOp]);
+        return newStacks;
+      });
 
       return true;
-    } catch (e) {
+    } catch (e: any) {
       throw new Error(`Redo failed: ${e.message}`);
     }
-  }, [redoStack]);
+  }, [getRepoStacks]);
+
+  // Backwards compatibility - returns state for current repo
+  const undoStateForRepo = useCallback((repo: Repository | null) => getUndoState(repo), [getUndoState]);
+  const redoStateForRepo = useCallback((repo: Repository | null) => getRedoState(repo), [getRedoState]);
 
   return {
-    undoState,
-    redoState,
+    undoState: undoStateForRepo,
+    redoState: redoStateForRepo,
+    getUndoState,
+    getRedoState,
     recordOperation,
     clearUndo,
     performUndo,
     performRedo,
-    undoStack,
-    redoStack,
+    undoStacks,
+    redoStacks,
   };
 };

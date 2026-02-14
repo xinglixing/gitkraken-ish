@@ -93,7 +93,7 @@ export const WorktreesPanel: React.FC<WorktreesPanelProps> = ({ isOpen, onClose,
         }
     };
 
-    const handleRemoveWorktree = async (worktree: Worktree) => {
+    const handleRemoveWorktree = async (worktree: Worktree, force: boolean = false) => {
         if (!repo) return;
 
         if (worktree.isMain) {
@@ -107,21 +107,45 @@ export const WorktreesPanel: React.FC<WorktreesPanelProps> = ({ isOpen, onClose,
         }
 
         const confirmed = await confirm({
-            title: 'Remove Worktree',
-            message: `Are you sure you want to remove the worktree at "${worktree.path}"?`,
-            details: worktree.branch ? `Branch: ${worktree.branch}` : undefined,
+            title: force ? 'Force Remove Worktree' : 'Remove Worktree',
+            message: `Are you sure you want to ${force ? 'force ' : ''}remove the worktree at "${worktree.path}"?`,
+            details: force
+                ? 'WARNING: This will delete the worktree and any uncommitted changes will be lost!'
+                : (worktree.branch ? `Branch: ${worktree.branch}` : undefined),
             type: 'danger',
-            confirmText: 'Remove',
+            confirmText: force ? 'Force Remove' : 'Remove',
         });
 
         if (confirmed) {
             setLoading(true);
             try {
-                await gitWorktreeRemove(repo, worktree.path, false);
+                await gitWorktreeRemove(repo, worktree.path, force);
                 await loadWorktrees();
-                showAlert('Success', 'Worktree removed', 'success');
-            } catch (error) {
-                showAlert('Error', `Failed to remove worktree: ${error.message}`, 'error');
+                showAlert('Success', `Worktree ${force ? 'force ' : ''}removed`, 'success');
+            } catch (error: any) {
+                const errorMsg = error.message || '';
+                // If permission denied or has modifications, offer force option
+                if (!force && (
+                    errorMsg.includes('permission denied') ||
+                    errorMsg.includes('Permission denied') ||
+                    errorMsg.includes('modifications') ||
+                    errorMsg.includes('uncommitted') ||
+                    errorMsg.includes('is locked')
+                )) {
+                    const shouldForce = await confirm({
+                        title: 'Remove Failed',
+                        message: 'The worktree could not be removed. It may have uncommitted changes or locked files.',
+                        details: 'Would you like to force remove it? This will DELETE any uncommitted changes.',
+                        type: 'danger',
+                        confirmText: 'Force Remove',
+                    });
+                    if (shouldForce) {
+                        handleRemoveWorktree(worktree, true);
+                        return;
+                    }
+                } else {
+                    showAlert('Error', `Failed to remove worktree: ${error.message}`, 'error');
+                }
             } finally {
                 setLoading(false);
             }

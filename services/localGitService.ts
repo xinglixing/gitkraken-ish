@@ -124,6 +124,16 @@ const gitExecWithToken = (args: string[], cwd: string, token: string): string =>
  * Returns the branch name if symbolic, null if detached.
  */
 const getSymbolicRef = async (fs: any, dir: string): Promise<string | null> => {
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            const result = gitExec(['symbolic-ref', '--short', 'HEAD'], dir).trim();
+            return result || null;
+        } catch {
+            return null;
+        }
+    }
+
     try {
         const branch = await git.currentBranch({ fs, dir, fullname: false });
         return branch || null;
@@ -197,6 +207,18 @@ const getGitContext = (repo: Repository) => {
 
 export const gitIsDirty = async (repo: Repository): Promise<boolean> => {
     try {
+        const dir = getRepoPath(repo);
+
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && dir) {
+            try {
+                const output = gitExec(['status', '--porcelain'], dir);
+                return output.trim().length > 0;
+            } catch (e) {
+                return false;
+            }
+        }
+
         // Use cached statusMatrix for better performance on repeated checks
         const matrix = await getCachedStatusMatrix(repo);
         // row: [filepath, head, workdir, stage]
@@ -210,6 +232,84 @@ export const gitIsDirty = async (repo: Repository): Promise<boolean> => {
     } catch (e) {
         // console.error("Error checking git status:", e);
         return false;
+    }
+}
+
+/**
+ * Check if a specific submodule path is modified in the repo
+ * Returns true if the submodule has uncommitted changes (new commit pointer)
+ */
+export const isSubmoduleModified = async (repo: Repository, submodulePath: string): Promise<boolean> => {
+    if (!repo?.handle || !submodulePath) return false;
+
+    try {
+        if (isNodeEnv && typeof repo.handle === 'string') {
+            // Use native git status to check submodule
+            const status = gitExec(['status', '--porcelain', submodulePath], repo.handle);
+            // If there's any output, the submodule is modified
+            return status.trim().length > 0;
+        }
+        return false;
+    } catch (e) {
+        console.warn('Error checking submodule status:', e);
+        return false;
+    }
+}
+
+/**
+ * Get submodule status details for display
+ */
+export const getSubmoduleStatus = async (repo: Repository, submodulePath: string): Promise<{
+    modified: boolean;
+    newCommits: number;
+    currentSha?: string;
+    trackedSha?: string;
+}> => {
+    if (!repo?.handle || !submodulePath) {
+        return { modified: false, newCommits: 0 };
+    }
+
+    try {
+        if (isNodeEnv && typeof repo.handle === 'string') {
+            const path = require('path');
+            const submoduleFullPath = path.join(repo.handle, submodulePath);
+
+            // Get current commit in submodule
+            let currentSha: string | undefined;
+            try {
+                currentSha = gitExec(['rev-parse', 'HEAD'], submoduleFullPath).trim();
+            } catch {
+                currentSha = undefined;
+            }
+
+            // Get tracked commit in parent
+            let trackedSha: string | undefined;
+            try {
+                trackedSha = gitExec(['ls-tree', 'HEAD', submodulePath], repo.handle)
+                    .split(/\s+/)[2]; // Format: mode type sha path
+            } catch {
+                trackedSha = undefined;
+            }
+
+            const modified = currentSha !== trackedSha;
+
+            // Count new commits if modified
+            let newCommits = 0;
+            if (modified && currentSha && trackedSha) {
+                try {
+                    const count = gitExec(['rev-list', '--count', `${trackedSha}..${currentSha}`], submoduleFullPath);
+                    newCommits = parseInt(count.trim(), 10) || 0;
+                } catch {
+                    newCommits = modified ? 1 : 0;
+                }
+            }
+
+            return { modified, newCommits, currentSha, trackedSha };
+        }
+        return { modified: false, newCommits: 0 };
+    } catch (e) {
+        console.warn('Error getting submodule status:', e);
+        return { modified: false, newCommits: 0 };
     }
 }
 
@@ -412,22 +512,32 @@ export const createBranch = async (repo: Repository, branchName: string, oid?: s
     }
 
     try {
-        await git.branch({ fs, dir, ref: branchName, object: oid || undefined });
+        // Use native git in Node environment for better submodule support
+        if (isNodeEnv && typeof dir === 'string') {
+            const args = oid
+                ? ['branch', branchName, oid]
+                : ['branch', branchName];
+            gitExec(args, dir);
+        } else {
+            // Fallback to isomorphic-git (browser mode)
+            await git.branch({ fs, dir, ref: branchName, object: oid || undefined });
+        }
         // Clear cache after branch creation
         clearRepoCache(dir);
     } catch (error) {
         // Provide more helpful error messages
-        if (error.message.includes('not allowed') || error.message.includes('user agent')) {
+        const errorMsg = error.stderr || error.message || '';
+        if (errorMsg.includes('not allowed') || errorMsg.includes('user agent')) {
             throw new Error(
                 'Branch creation requires full filesystem access. ' +
                 'This operation may not be available in browser mode. ' +
                 'Please use Electron desktop version or command line: git branch ' + branchName
             );
         }
-        if (error.message.includes('already exists')) {
+        if (errorMsg.includes('already exists')) {
             throw new Error('Branch "' + branchName + '" already exists');
         }
-        throw error;
+        throw new Error(`Failed to create branch: ${sanitizeErrorMessage(errorMsg)}`);
     }
 };
 
@@ -473,6 +583,30 @@ export const fastBranchRefresh = async (repo: Repository, branch: string = 'HEAD
 // Basic diff implementation (returns full content for side-by-side view)
 export const gitGetFileContent = async (repo: Repository, ref: string, filepath: string): Promise<string> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Check if file is inside a submodule
+            const { submodulePath, relativePath } = await getSubmodulePathForFile(repo, filepath);
+
+            let fileDir = dir;
+            let fileFilepath = filepath;
+
+            if (submodulePath) {
+                // File is in a submodule, run show from submodule directory
+                const path = require('path');
+                fileDir = path.join(dir, submodulePath);
+                fileFilepath = relativePath;
+            }
+
+            const output = gitExec(['show', `${ref}:${fileFilepath}`], fileDir);
+            return output;
+        } catch (error: any) {
+            return "";
+        }
+    }
+
     try {
         // Resolve symbolic refs (e.g. 'HEAD', branch names) to an OID
         let oid = ref;
@@ -520,7 +654,18 @@ export const gitGetWorkingFileContent = async (repo: Repository, filepath: strin
 // Stage a file
 export const gitStage = async (repo: Repository, filepath: string) => {
     const { fs, dir } = getGitContext(repo);
-    await git.add({ fs, dir, filepath });
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['add', filepath], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to stage file: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        await git.add({ fs, dir, filepath });
+    }
+
     // Clear working dir cache (staging changes status)
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
@@ -542,14 +687,31 @@ export const gitWriteFile = async (repo: Repository, filepath: string, content: 
 // Unstage a file (Reset index to HEAD)
 export const gitUnstage = async (repo: Repository, filepath: string) => {
     const { fs, dir } = getGitContext(repo);
-    // If HEAD exists (repo has commits), reset index to HEAD
-    // If empty repo, remove from index?
-    try {
-        await git.resetIndex({ fs, dir, filepath, ref: 'HEAD' });
-    } catch {
-        // Fallback for initial commit scenario where HEAD might not exist
-        await git.remove({ fs, dir, filepath });
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Try to reset to HEAD first
+            gitExec(['reset', 'HEAD', '--', filepath], dir);
+        } catch {
+            // If HEAD doesn't exist (empty repo), try to remove from index
+            try {
+                gitExec(['rm', '--cached', filepath], dir);
+            } catch (e) {
+                // Ignore errors
+            }
+        }
+    } else {
+        // If HEAD exists (repo has commits), reset index to HEAD
+        // If empty repo, remove from index?
+        try {
+            await git.resetIndex({ fs, dir, filepath, ref: 'HEAD' });
+        } catch {
+            // Fallback for initial commit scenario where HEAD might not exist
+            await git.remove({ fs, dir, filepath });
+        }
     }
+
     // Clear working dir cache (staging changes status)
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
@@ -557,15 +719,45 @@ export const gitUnstage = async (repo: Repository, filepath: string) => {
 // Commit staged changes
 export const gitCommit = async (repo: Repository, message: string, user: { name: string, email: string }) => {
     const { fs, dir } = getGitContext(repo);
-    await git.commit({ fs, dir, message, author: user });
+
+    // Use native git in Node environment for better submodule support
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Set author info via environment variables for this command
+            const env = {
+                ...process.env,
+                GIT_AUTHOR_NAME: user.name,
+                GIT_AUTHOR_EMAIL: user.email,
+                GIT_COMMITTER_NAME: user.name,
+                GIT_COMMITTER_EMAIL: user.email,
+            };
+            const { execFileSync } = require('child_process');
+            execFileSync('git', ['commit', '-m', message], {
+                cwd: dir,
+                encoding: 'utf-8',
+                stdio: 'pipe',
+                env,
+            });
+        } catch (error: any) {
+            throw new Error(`Commit failed: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        // Fallback to isomorphic-git (browser mode)
+        await git.commit({ fs, dir, message, author: user });
+    }
     // Clear caches after commit (working dir and branches may change)
     clearRepoCache(typeof dir === 'string' ? dir : undefined);
 }
 
 export const gitInitGitflow = async (repo: Repository) => {
     const { fs, dir } = getGitContext(repo);
-    // Create 'develop' from 'main'
-    await git.branch({ fs, dir, ref: 'develop', checkout: true });
+    // Create 'develop' from 'main' and checkout
+    if (isNodeEnv && typeof dir === 'string') {
+        gitExec(['checkout', '-b', 'develop'], dir);
+    } else {
+        await git.branch({ fs, dir, ref: 'develop', checkout: true });
+    }
+    clearRepoCache(typeof dir === 'string' ? dir : undefined);
 }
 
 /**
@@ -889,7 +1081,20 @@ export const gitSquashCommits = async (
 }
 
 export const gitStatus = async (repo: Repository): Promise<string> => {
-    // Use cached statusMatrix for better performance
+    const dir = getRepoPath(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && dir) {
+        try {
+            const output = gitExec(['status', '--porcelain'], dir);
+            if (!output.trim()) return "Working tree clean";
+            return output.trim();
+        } catch (e) {
+            return "Failed to get status";
+        }
+    }
+
+    // Use cached statusMatrix for better performance (fallback for browser)
     const status = await getCachedStatusMatrix(repo);
     const changed = status.filter(row => row[1] !== row[2] || row[1] !== row[3]);
     if (changed.length === 0) return "Working tree clean";
@@ -897,16 +1102,109 @@ export const gitStatus = async (repo: Repository): Promise<string> => {
 };
 
 export const gitListFiles = async (repo: Repository, path: string = '.'): Promise<string[]> => {
-    const { fs, dir } = getGitContext(repo);
+    const dir = getRepoPath(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && dir) {
+        try {
+            const targetPath = path === '.' ? dir : require('path').join(dir, path);
+            const nodeFs = require('fs');
+            const files = nodeFs.readdirSync(targetPath);
+            return files as string[];
+        } catch (e: any) {
+            throw new Error(e.message || "Failed to list files");
+        }
+    }
+
+    const { fs, dir: gitDir } = getGitContext(repo);
     try {
-        const files = await fs.readdir(path === '.' ? dir : path);
+        const files = await fs.readdir(path === '.' ? gitDir : path);
         return files as string[];
-    } catch (e) {
+    } catch (e: any) {
         throw new Error(e.message || "Failed to list files");
     }
 };
 
 // Returns split of staged vs unstaged files
+/**
+ * Native git implementation for fetching working dir status - needed for submodules
+ * where .git is a file pointing to the parent's .git/modules/ directory.
+ */
+const fetchWorkingDirNative = (dir: string): FileChange[] => {
+    try {
+        // Use git status --porcelain to get working dir status
+        // --ignore-submodules=none ensures submodule changes are shown
+        const output = gitExec(['status', '--porcelain', '-uall', '--ignore-submodules=none'], dir);
+        const lines = output.trim().split('\n').filter(Boolean);
+
+        const results: FileChange[] = [];
+
+        for (const line of lines) {
+            if (line.length < 3) continue;
+
+            // Porcelain format: XY PATH or XY ORIG_PATH -> PATH (for renames)
+            // X = staged status, Y = unstaged status, then a space, then the path
+            const staged = line[0];
+            const unstaged = line[1];
+            // Find the path starting after XY and the separator space
+            // Some git versions may have different spacing, so find first non-space after position 2
+            let pathStart = 2;
+            while (pathStart < line.length && line[pathStart] === ' ') {
+                pathStart++;
+            }
+            const path = line.substring(pathStart).trim();
+
+            // Handle rename case: XY ORIG_PATH -> PATH
+            let filename = path;
+            if (path.includes(' -> ')) {
+                const parts = path.split(' -> ');
+                filename = parts[parts.length - 1].trim();
+            }
+
+            // Map status codes
+            const mapStatus = (code: string): FileChange['status'] => {
+                switch (code) {
+                    case 'A': return 'added';
+                    case 'D': return 'deleted';
+                    case 'R': return 'renamed';
+                    case 'M': return 'modified';
+                    case 'S': return 'modified'; // Submodule change (commit modified)
+                    case 'U': return 'conflicted'; // Submodule conflict
+                    case '?': return 'added'; // Untracked
+                    default: return 'modified';
+                }
+            };
+
+            // Staged changes (first column)
+            if (staged !== ' ' && staged !== '?') {
+                results.push({
+                    filename,
+                    status: mapStatus(staged),
+                    staged: true,
+                    additions: 0,
+                    deletions: 0
+                });
+            }
+
+            // Unstaged changes (second column)
+            if (unstaged !== ' ') {
+                results.push({
+                    filename,
+                    status: mapStatus(unstaged),
+                    staged: false,
+                    additions: 0,
+                    deletions: 0
+                });
+            }
+        }
+
+        return results;
+    } catch (e) {
+        console.error('Error in native working dir fetch:', e);
+        return [];
+    }
+};
+
 export const fetchWorkingDir = async (repo: Repository, bypassCache = false): Promise<FileChange[]> => {
     try {
         const { fs, dir } = getGitContext(repo);
@@ -915,6 +1213,13 @@ export const fetchWorkingDir = async (repo: Repository, bypassCache = false): Pr
         if (!bypassCache) {
             const cached = getCachedData(workingDirCache, dir, WORKING_DIR_CACHE_TTL);
             if (cached) return cached;
+        }
+
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && typeof dir === 'string') {
+            const results = fetchWorkingDirNative(dir);
+            setCachedData(workingDirCache, dir, results);
+            return results;
         }
 
         // Use fresh statusMatrix but also update the statusMatrix cache
@@ -961,14 +1266,64 @@ export const fetchWorkingDir = async (repo: Repository, bypassCache = false): Pr
     }
 }
 
+
 export const gitCherryPick = async (repo: Repository, commit: Commit) => {
     const { fs, dir } = getGitContext(repo);
 
     // Check if we're in a Node/Electron environment
-
-
     if (isNodeEnv && typeof dir === 'string') {
-        gitExec(['cherry-pick', commit.id], dir);
+        try {
+            // Check if there's already a cherry-pick in progress
+            try {
+                gitExec(['rev-parse', '--verify', 'CHERRY_PICK_HEAD'], dir);
+                // CHERRY_PICK_HEAD exists - there's already a cherry-pick in progress
+                throw new Error(`CHERRY_PICK_IN_PROGRESS: A cherry-pick is already in progress. Please resolve or abort it before starting a new one.`);
+            } catch (e: any) {
+                // If the error is our own error, re-throw it
+                if (e.message && e.message.includes('CHERRY_PICK_IN_PROGRESS')) {
+                    throw e;
+                }
+                // Otherwise, no cherry-pick in progress - good to proceed
+            }
+
+            gitExec(['cherry-pick', commit.id], dir);
+        } catch (error: any) {
+            const errorMsg = error.stderr || error.stdout || error.message || '';
+
+            // Check for empty cherry-pick (changes already applied)
+            if (errorMsg.includes('empty') || errorMsg.includes('The previous cherry-pick is now empty')) {
+                // Abort the empty cherry-pick
+                try {
+                    gitExec(['cherry-pick', '--abort'], dir);
+                } catch (abortError) {
+                    // Ignore abort errors
+                }
+                throw new Error(`The changes from commit ${commit.id.substring(0, 7)} are already present in the current branch. Nothing to cherry-pick.`);
+            }
+
+            // Check for merge conflicts
+            if (errorMsg.includes('could not apply') ||
+                errorMsg.includes('conflict') ||
+                errorMsg.includes('CONFLICT')) {
+                throw new Error(
+                    `Merge conflict when cherry-picking commit ${commit.id.substring(0, 7)}.\n\n` +
+                    `The commit conflicts with changes in your current branch.\n\n` +
+                    `Options:\n` +
+                    `1. Resolve conflicts manually, then run "git cherry-pick --continue"\n` +
+                    `2. Abort with "git cherry-pick --abort" to cancel\n` +
+                    `3. Skip this commit with "git cherry-pick --skip"`
+                );
+            }
+
+            // Check if there's already a cherry-pick/rebase/merge in progress
+            if (errorMsg.includes('.git/index.lock') || errorMsg.includes('Unable to create')) {
+                throw new Error(`Another git operation is in progress. Please wait for it to complete or check for stale lock files.`);
+            }
+
+            // Show clean error without full git output
+            const shortError = errorMsg.split('\n')[0] || 'Unknown error';
+            throw new Error(`Cherry-pick failed: ${shortError}`);
+        }
     } else {
         throw new Error('Cherry-pick is only supported in Electron/desktop mode. Please use the command line: git cherry-pick ' + commit.id);
     }
@@ -977,13 +1332,138 @@ export const gitCherryPick = async (repo: Repository, commit: Commit) => {
 export const gitCherryPickMultiple = async (repo: Repository, commits: Commit[]) => {
     const { fs, dir } = getGitContext(repo);
 
-
-
     if (isNodeEnv && typeof dir === 'string') {
         const ids = commits.map(c => c.id);
-        gitExec(['cherry-pick', ...ids], dir);
+
+        try {
+            // Check if there's already a cherry-pick in progress
+            try {
+                gitExec(['rev-parse', '--verify', 'CHERRY_PICK_HEAD'], dir);
+                throw new Error(`CHERRY_PICK_IN_PROGRESS: A cherry-pick is already in progress. Please resolve or abort it before starting a new one.`);
+            } catch (e: any) {
+                if (e.message && e.message.includes('CHERRY_PICK_IN_PROGRESS')) {
+                    throw e;
+                }
+            }
+
+            gitExec(['cherry-pick', ...ids], dir);
+        } catch (error: any) {
+            const errorMsg = error.stderr || error.stdout || error.message || '';
+
+            // Check for empty cherry-pick
+            if (errorMsg.includes('empty') || errorMsg.includes('The previous cherry-pick is now empty')) {
+                try {
+                    gitExec(['cherry-pick', '--abort'], dir);
+                } catch (abortError) {
+                    // Ignore
+                }
+                throw new Error(`One or more commits have changes that are already present in the current branch.`);
+            }
+
+            // Check for merge conflicts
+            if (errorMsg.includes('could not apply') ||
+                errorMsg.includes('conflict') ||
+                errorMsg.includes('CONFLICT')) {
+                throw new Error(
+                    `Merge conflict during cherry-pick.\n\n` +
+                    `One or more commits conflict with changes in your current branch.\n\n` +
+                    `Options:\n` +
+                    `1. Resolve conflicts manually, then run "git cherry-pick --continue"\n` +
+                    `2. Abort with "git cherry-pick --abort" to cancel\n` +
+                    `3. Skip the conflicting commit with "git cherry-pick --skip"`
+                );
+            }
+
+            // Show clean error without full git output
+            const shortError = errorMsg.split('\n')[0] || 'Unknown error';
+            throw new Error(`Cherry-pick failed: ${shortError}`);
+        }
     } else {
         throw new Error('Cherry-pick is only supported in Electron/desktop mode.');
+    }
+};
+
+/**
+ * Native git implementation for fetching branches - needed for submodules
+ * where .git is a file pointing to the parent's .git/modules/ directory.
+ * isomorphic-git doesn't handle this case correctly.
+ */
+const fetchLocalBranchesNative = (dir: string, repo: Repository): Branch[] => {
+    const branchObjects: Branch[] = [];
+
+    try {
+        // Get current branch
+        let currentHeadBranch: string | null = null;
+        try {
+            currentHeadBranch = gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], dir).trim();
+            if (currentHeadBranch === 'HEAD') {
+                currentHeadBranch = null;
+            }
+        } catch (e) {
+            // Couldn't determine current branch
+        }
+
+        // Check if HEAD is detached
+        let isDetached = false;
+        try {
+            const symbolicRef = gitExec(['symbolic-ref', '--short', 'HEAD'], dir).trim();
+            if (!symbolicRef) {
+                isDetached = true;
+            }
+        } catch {
+            isDetached = true;
+        }
+
+        // Add detached HEAD if needed
+        if (isDetached) {
+            try {
+                const headSha = gitExec(['rev-parse', 'HEAD'], dir).trim();
+                branchObjects.push({
+                    name: 'HEAD',
+                    commitId: headSha,
+                    isRemote: false,
+                    active: true
+                });
+            } catch (e2) {
+                // Can't resolve HEAD, skip it
+            }
+        }
+
+        // List all local branches
+        let branchOutput: string;
+        try {
+            branchOutput = gitExec(['branch', '--list', '--format=%(refname:short)'], dir);
+        } catch (e) {
+            branchOutput = '';
+        }
+
+        const branches = branchOutput
+            .trim()
+            .split('\n')
+            .filter(b => b.trim() && !b.startsWith('remotes/') && !b.startsWith('origin/'));
+
+        // Resolve each branch's SHA
+        for (const branchName of branches) {
+            try {
+                const sha = gitExec(['rev-parse', branchName], dir).trim();
+                branchObjects.push({
+                    name: branchName,
+                    commitId: sha,
+                    isRemote: false,
+                    active: branchName === currentHeadBranch
+                });
+            } catch (e) {
+                console.warn(`Could not resolve branch "${branchName}":`, e);
+            }
+        }
+
+        // Cache the results
+        setCachedData(branchCache, dir, branchObjects);
+
+        return branchObjects;
+    } catch (e) {
+        console.error('Error in native branch fetch:', e);
+        return [];
     }
 };
 
@@ -1005,6 +1485,11 @@ export const fetchLocalBranches = async (repo: Repository, bypassCache = false):
                     return cached;
                 }
             }
+        }
+
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && typeof dir === 'string') {
+            return fetchLocalBranchesNative(dir, repo);
         }
 
         const branches = await git.listBranches({ fs, dir });
@@ -1074,6 +1559,68 @@ export const fetchLocalBranches = async (repo: Repository, bypassCache = false):
     }
 };
 
+/**
+ * Native git implementation for fetching commits - needed for submodules
+ * where .git is a file pointing to the parent's .git/modules/ directory.
+ */
+const fetchLocalCommitsNative = (
+    dir: string,
+    branch: string = 'HEAD',
+    skip: number = 0,
+    limit: number = 20,
+    lastOid?: string
+): Commit[] => {
+    try {
+        let output: string;
+
+        if (skip > 0 && lastOid) {
+            // Pagination: skip commits until after lastOid, then get limit commits
+            // First, get all commits up to skip + limit from lastOid
+            const fetchDepth = skip + limit + 1;
+            output = gitExec(
+                ['log', lastOid, '--format=%H|%s|%an|%ai|%P', '--max-count=' + fetchDepth],
+                dir
+            );
+            const lines = output.trim().split('\n').filter(Boolean);
+            // Skip the first commit (lastOid itself) and then take 'limit' commits from position 'skip'
+            const skipLines = lines.slice(1); // Remove lastOid itself
+            const pageLines = skipLines.slice(skip, skip + limit);
+            output = pageLines.join('\n');
+        } else {
+            const format = '%H|%s|%an|%ai|%P';
+            const maxCount = skip + limit;
+            output = gitExec(
+                ['log', branch, '--format=' + format, '--max-count=' + maxCount, '--skip=' + skip],
+                dir
+            );
+        }
+
+        const lines = output.trim().split('\n').filter(Boolean);
+
+        return lines.map((line) => {
+            const parts = line.split('|');
+            const [sha, message, author, dateStr, parentsStr] = parts;
+            const parents = parentsStr ? parentsStr.split(' ').filter(Boolean) : [];
+
+            return {
+                id: sha,
+                shortId: sha.substring(0, 7),
+                message: message || '',
+                author: author || '',
+                date: new Date(dateStr).toISOString(),
+                parents: parents,
+                lane: 0,
+                color: '#888',
+                changes: [],
+                treeId: ''
+            };
+        });
+    } catch (e) {
+        console.error('Error in native commit fetch:', e);
+        return [];
+    }
+};
+
 export const fetchLocalCommits = async (
     repo: Repository,
     branch: string = 'HEAD',
@@ -1082,6 +1629,12 @@ export const fetchLocalCommits = async (
     lastOid?: string
 ): Promise<Commit[]> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        return fetchLocalCommitsNative(dir, branch, skip, limit, lastOid);
+    }
+
     try {
         // For local repos, first try to resolve HEAD to get the actual branch
         let ref = branch;
@@ -1172,6 +1725,20 @@ export const hasMoreCommits = async (
             }
         }
 
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && typeof dir === 'string') {
+            try {
+                const output = gitExec(
+                    ['log', ref, '--format=%H', '--max-count=' + (currentCount + 1)],
+                    dir
+                );
+                const commits = output.trim().split('\n').filter(Boolean);
+                return commits.length > currentCount;
+            } catch (e) {
+                return false;
+            }
+        }
+
         // Fetch one more than current count to check if there's more
         const commits = await git.log({ fs, dir, ref, depth: currentCount + 1 });
         return commits.length > currentCount;
@@ -1184,7 +1751,12 @@ export const fetchLocalCommitDetails = async (repo: Repository, commit: Commit):
     const { fs, dir } = getGitContext(repo);
     const oid = commit.id;
     const parentOid = commit.parents[0];
-    if (!parentOid) return commit; 
+    if (!parentOid) return commit;
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        return fetchLocalCommitDetailsNative(dir, commit);
+    }
 
     const files: FileChange[] = [];
     try {
@@ -1210,7 +1782,7 @@ export const fetchLocalCommitDetails = async (repo: Repository, commit: Commit):
                         if (status !== 'deleted' && oidB) {
                             const { blob } = await git.readBlob({ fs, dir, oid: oidB });
                             const text = new TextDecoder().decode(blob);
-                            const snippet = text.substring(0, 2000); 
+                            const snippet = text.substring(0, 2000);
                             patch = `[NEW CONTENT START]\n${snippet}\n[NEW CONTENT END]`;
                         } else if (status === 'deleted' && oidA) {
                             patch = `[FILE DELETED]`;
@@ -1222,7 +1794,7 @@ export const fetchLocalCommitDetails = async (repo: Repository, commit: Commit):
                     files.push({
                         filename: filepath,
                         status,
-                        staged: false, 
+                        staged: false,
                         additions: 0,
                         deletions: 0,
                         patch: patch
@@ -1244,8 +1816,96 @@ export const fetchLocalCommitDetails = async (repo: Repository, commit: Commit):
     return { ...commit, changes: files };
 };
 
+/**
+ * Native git implementation for fetching commit details - needed for submodules
+ * where .git is a file pointing to the parent's .git/modules/ directory.
+ */
+const fetchLocalCommitDetailsNative = (dir: string, commit: Commit): Commit => {
+    const oid = commit.id;
+    const parentOid = commit.parents[0];
+    if (!parentOid) return commit;
+
+    const files: FileChange[] = [];
+
+    try {
+        // First check if the commit object exists
+        try {
+            gitExec(['cat-file', '-e', oid], dir);
+        } catch {
+            // Commit object doesn't exist - could be shallow clone, garbage collected, or during rebase
+            console.debug("Commit object not available (shallow clone, GC, or rebase state):", oid);
+            return { ...commit, changes: [], detailsUnavailable: true } as Commit;
+        }
+
+        // Use git diff-tree to get changed files
+        const output = gitExec(['diff-tree', '--no-commit-id', '--name-status', '-r', oid], dir);
+        const lines = output.trim().split('\n').filter(Boolean);
+
+        for (const line of lines) {
+            const parts = line.split('\t');
+            const statusCode = parts[0];
+            const filepath = parts[1];
+
+            let status: FileChange['status'] = 'modified';
+            if (statusCode === 'A') status = 'added';
+            else if (statusCode === 'D') status = 'deleted';
+            else if (statusCode === 'R') status = 'renamed';
+            else if (statusCode === 'M') status = 'modified';
+
+            let patch = '';
+            try {
+                if (status !== 'deleted') {
+                    const content = gitExec(['show', `${oid}:${filepath}`], dir);
+                    const snippet = content.substring(0, 2000);
+                    patch = `[NEW CONTENT START]\n${snippet}\n[NEW CONTENT END]`;
+                } else {
+                    patch = `[FILE DELETED]`;
+                }
+            } catch (e) {
+                patch = `[BINARY OR UNREADABLE]`;
+            }
+
+            files.push({
+                filename: filepath,
+                status,
+                staged: false,
+                additions: 0,
+                deletions: 0,
+                patch
+            });
+        }
+    } catch (e: any) {
+        // Handle specific error cases gracefully
+        const errorMsg = e?.stderr?.toString() || e?.message || '';
+
+        if (errorMsg.includes('bad object') ||
+            errorMsg.includes('does not exist') ||
+            errorMsg.includes('Not a valid object name') ||
+            errorMsg.includes('unknown revision')) {
+            console.debug("Commit details unavailable (object not found):", oid);
+            return { ...commit, changes: [], detailsUnavailable: true } as Commit;
+        }
+
+        console.error("Failed to get commit details:", errorMsg || e);
+        return { ...commit, changes: [], detailsUnavailable: true } as Commit;
+    }
+
+    return { ...commit, changes: files };
+};
+
 export const isGitRepo = async (repo: Repository): Promise<boolean> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['rev-parse', '--git-dir'], dir);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     try {
         await git.resolveRef({ fs, dir, ref: 'HEAD' });
         return true;
@@ -1259,9 +1919,10 @@ export const isGitRepo = async (repo: Repository): Promise<boolean> => {
  */
 export const isGitRepoPath = async (path: string): Promise<boolean> => {
     if (!isNodeEnv) return false;
+
+    // Use native git for submodules (where .git is a file, not a directory)
     try {
-        const fs = require('fs');
-        await git.resolveRef({ fs, dir: path, ref: 'HEAD' });
+        gitExec(['rev-parse', '--git-dir'], path);
         return true;
     } catch (e) {
         return false;
@@ -1307,60 +1968,118 @@ export const initGitRepo = async (repo: Repository, defaultBranch: string = 'mai
 
 export const gitStageAll = async (repo: Repository) => {
     const { fs, dir } = getGitContext(repo);
-    const status = await git.statusMatrix({ fs, dir });
-    const toAdd = status.filter(row => row[2] !== row[3]).map(row => row[0]);
-    await Promise.all(toAdd.map(filepath => git.add({ fs, dir, filepath })));
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['add', '-A'], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to stage all: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        const status = await git.statusMatrix({ fs, dir });
+        const toAdd = status.filter(row => row[2] !== row[3]).map(row => row[0]);
+        await Promise.all(toAdd.map(filepath => git.add({ fs, dir, filepath })));
+    }
+
     // Clear working dir cache
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
 
 export const gitUnstageAll = async (repo: Repository) => {
     const { fs, dir } = getGitContext(repo);
-    const status = await git.statusMatrix({ fs, dir });
-    const toReset = status.filter(row => row[3] !== row[1]).map(row => row[0]);
-    await Promise.all(toReset.map(filepath => git.resetIndex({ fs, dir, filepath, ref: 'HEAD' })));
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['reset', 'HEAD', '--', '.'], dir);
+        } catch (error: any) {
+            // Ignore errors (e.g., empty repo)
+        }
+    } else {
+        const status = await git.statusMatrix({ fs, dir });
+        const toReset = status.filter(row => row[3] !== row[1]).map(row => row[0]);
+        await Promise.all(toReset.map(filepath => git.resetIndex({ fs, dir, filepath, ref: 'HEAD' })));
+    }
+
     // Clear working dir cache
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
 
 export const gitDiscardFile = async (repo: Repository, filepath: string) => {
     const { fs, dir } = getGitContext(repo);
-    const status = await git.statusMatrix({ fs, dir, filepaths: [filepath] });
 
-    if (status.length === 0) return;
-
-    const [, headStatus, workdirStatus] = status[0];
-
-    if (headStatus === 0) {
-        // Untracked file — delete it
-        const filePath = typeof dir === 'string' ? require('path').join(dir, filepath) : `${dir}/${filepath}`;
-        await fs.unlink(filePath);
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Check if file is tracked
+            const result = gitExec(['ls-files', filepath], dir).trim();
+            if (result) {
+                // Tracked file - restore from HEAD
+                gitExec(['checkout', 'HEAD', '--', filepath], dir);
+            } else {
+                // Untracked file - delete it
+                const path = require('path');
+                const filePath = path.join(dir, filepath);
+                const nodeFs = require('fs');
+                nodeFs.unlinkSync(filePath);
+            }
+        } catch (error: any) {
+            throw new Error(`Failed to discard file: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
     } else {
-        // Tracked file — restore from HEAD
-        await git.checkout({ fs, dir, ref: 'HEAD', filepaths: [filepath], force: true });
+        const status = await git.statusMatrix({ fs, dir, filepaths: [filepath] });
+
+        if (status.length === 0) return;
+
+        const [, headStatus, workdirStatus] = status[0];
+
+        if (headStatus === 0) {
+            // Untracked file — delete it
+            const filePath = typeof dir === 'string' ? require('path').join(dir, filepath) : `${dir}/${filepath}`;
+            await fs.unlink(filePath);
+        } else {
+            // Tracked file — restore from HEAD
+            await git.checkout({ fs, dir, ref: 'HEAD', filepaths: [filepath], force: true });
+        }
     }
+
     // Clear working dir cache
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
 
 export const gitDiscardAll = async (repo: Repository) => {
     const { fs, dir } = getGitContext(repo);
-    const status = await git.statusMatrix({ fs, dir });
 
-    // Restore modified/deleted tracked files
-    const toCheckout = status.filter(row => row[1] !== 0 && row[2] !== row[1]).map(row => row[0]);
-    if (toCheckout.length > 0) {
-        await git.checkout({ fs, dir, ref: 'HEAD', filepaths: toCheckout, force: true });
-    }
-
-    // Remove new untracked files
-    const toDelete = status.filter(row => row[1] === 0 && row[2] !== 0).map(row => row[0]);
-    for (const f of toDelete) {
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
         try {
-            const filePath = typeof dir === 'string' ? require('path').join(dir, f) : `${dir}/${f}`;
-            await fs.unlink(filePath);
-        } catch(e) { console.error("Failed to delete", f); }
+            // Restore all tracked files
+            gitExec(['checkout', '--', '.'], dir);
+            // Remove untracked files and directories
+            gitExec(['clean', '-fd'], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to discard all: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        const status = await git.statusMatrix({ fs, dir });
+
+        // Restore modified/deleted tracked files
+        const toCheckout = status.filter(row => row[1] !== 0 && row[2] !== row[1]).map(row => row[0]);
+        if (toCheckout.length > 0) {
+            await git.checkout({ fs, dir, ref: 'HEAD', filepaths: toCheckout, force: true });
+        }
+
+        // Remove new untracked files
+        const toDelete = status.filter(row => row[1] === 0 && row[2] !== 0).map(row => row[0]);
+        for (const f of toDelete) {
+            try {
+                const filePath = typeof dir === 'string' ? require('path').join(dir, f) : `${dir}/${f}`;
+                await fs.unlink(filePath);
+            } catch(e) { console.error("Failed to delete", f); }
+        }
     }
+
     // Clear working dir cache
     workingDirCache.delete(typeof dir === 'string' ? dir : '');
 }
@@ -1384,6 +2103,10 @@ export const gitReorderCommits = async (
         throw new Error('Commit reordering requires a filesystem-based repository.');
     }
 
+    if (commitsToMove.length === 0) {
+        throw new Error('No commits to reorder');
+    }
+
     // allCommits is newest-first; build new order
     const moveIds = new Set(commitsToMove.map(c => c.id));
     const cleanList = allCommits.filter(c => !moveIds.has(c.id));
@@ -1401,10 +2124,21 @@ export const gitReorderCommits = async (
     // Reverse to get chronological order (oldest first) for cherry-picking
     const chronological = [...newOrder].reverse();
 
-    // Find the base: parent of the oldest commit in the range
-    const oldestCommit = allCommits[allCommits.length - 1];
-    if (!oldestCommit.parents[0]) throw new Error("Cannot rebase: root commit has no parent");
-    const baseSha = oldestCommit.parents[0];
+    // Find the oldest commit that will be in the new order
+    const oldestInNewOrder = chronological[0];
+
+    // Get the parent of the oldest commit as the base
+    // Use git rev-parse to handle cases where parents array might not be complete
+    let baseSha: string;
+    try {
+        baseSha = gitExec(['rev-parse', `${oldestInNewOrder.id}^`], dir).trim();
+    } catch {
+        throw new Error("Cannot reorder: unable to find parent commit of oldest commit");
+    }
+
+    if (!baseSha) {
+        throw new Error("Cannot reorder: root commit has no parent");
+    }
 
     // Get current branch name
     let currentBranch: string;
@@ -1428,12 +2162,51 @@ export const gitReorderCommits = async (
     for (const commit of chronological) {
         try {
             gitExec(['cherry-pick', commit.id], dir);
-        } catch (e) {
-            // Abort and restore original branch on failure
+        } catch (e: any) {
+            const stderr = e.stderr?.toString() || e.message || '';
+
+            // Check for empty cherry-pick (changes already applied) - skip these
+            if (stderr.includes('empty') || stderr.includes('The previous cherry-pick is now empty')) {
+                // This commit's changes are already present, skip it and continue
+                try { gitExec(['cherry-pick', '--skip'], dir); } catch (skipError) {
+                    // If skip fails, just continue - the commit may have been applied anyway
+                }
+                continue;
+            }
+
+            // Check for merge conflicts
+            if (stderr.includes('could not apply') ||
+                stderr.includes('conflict') ||
+                stderr.includes('CONFLICT') ||
+                stderr.includes('Merge conflict')) {
+                // Abort the cherry-pick and restore original branch
+                try { gitExec(['cherry-pick', '--abort'], dir); } catch (e2) { console.warn('cherry-pick abort failed:', e2); }
+                try { gitExec(['checkout', currentBranch], dir); } catch (e2) { console.warn('branch restore failed:', e2); }
+
+                // Extract conflicting files if possible
+                const conflictFiles = stderr.match(/(?:CONFLICT|error: could not apply)[^]*?(?=hint:|$)/i)?.[0] || '';
+
+                throw new Error(
+                    `Merge conflict when applying commit ${commit.id.substring(0, 7)}.\n\n` +
+                    `The commit "${commit.message?.split('\n')[0] || 'Unknown'}" conflicts with changes in your branch.\n\n` +
+                    `Options:\n` +
+                    `1. Resolve the conflicts manually and try again\n` +
+                    `2. Skip this commit if its changes are not needed\n` +
+                    `3. Abort and try a different approach\n\n` +
+                    `The repository has been restored to its original state.`
+                );
+            }
+
+            // For other errors, abort and restore original branch
             try { gitExec(['cherry-pick', '--abort'], dir); } catch (e2) { console.warn('cherry-pick abort failed:', e2); }
             try { gitExec(['checkout', currentBranch], dir); } catch (e2) { console.warn('branch restore failed:', e2); }
-            const stderr = e.stderr?.toString() || e.message || 'Unknown error';
-            throw new Error(`Cherry-pick failed for ${commit.id.substring(0, 7)}: ${stderr}`);
+
+            // Show user-friendly error without full git output
+            const shortError = stderr.split('\n')[0] || 'Unknown error';
+            throw new Error(
+                `Failed to apply commit ${commit.id.substring(0, 7)}: ${shortError}\n\n` +
+                `The repository has been restored to its original state.`
+            );
         }
     }
 
@@ -1446,6 +2219,28 @@ export const gitReorderCommits = async (
 }
 
 /**
+ * Get current HEAD SHA
+ */
+export const gitResolveRef = async (repo: Repository, ref: string = 'HEAD'): Promise<string> => {
+    const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            return gitExec(['rev-parse', ref], dir).trim();
+        } catch (error: any) {
+            throw new Error(`Failed to resolve ref '${ref}': ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    }
+
+    try {
+        return await git.resolveRef({ fs, dir, ref });
+    } catch (e: any) {
+        throw new Error(`Failed to resolve ref '${ref}': ${e.message}`);
+    }
+};
+
+/**
  * Reset HEAD to a specific state
  * @param repo Repository object
  * @param ref Target commit SHA or ref to reset to
@@ -1453,6 +2248,17 @@ export const gitReorderCommits = async (
  */
 export const gitReset = async (repo: Repository, ref: string, mode: 'soft' | 'mixed' | 'hard' = 'mixed') => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            const modeFlag = mode === 'soft' ? '--soft' : mode === 'hard' ? '--hard' : '--mixed';
+            gitExec(['reset', modeFlag, ref], dir);
+        } catch (error: any) {
+            throw new Error(`Reset failed: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
 
     // First, checkout the target ref to move HEAD
     await git.checkout({ fs, dir, ref, force: true });
@@ -1467,29 +2273,25 @@ export const gitReset = async (repo: Repository, ref: string, mode: 'soft' | 'mi
 };
 
 /**
- * Get current HEAD SHA
- */
-export const gitResolveRef = async (repo: Repository, ref: string = 'HEAD'): Promise<string> => {
-    const { fs, dir } = getGitContext(repo);
-
-    try {
-        return await git.resolveRef({ fs, dir, ref });
-    } catch (e) {
-        throw new Error(`Failed to resolve ref '${ref}': ${e.message}`);
-    }
-};
-
-/**
  * Delete a branch
  */
 export const gitDeleteBranch = async (repo: Repository, branchName: string) => {
     const { fs, dir } = getGitContext(repo);
 
-    await git.deleteBranch({
-        fs,
-        dir,
-        ref: branchName,
-    });
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['branch', '-D', branchName], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to delete branch: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        await git.deleteBranch({
+            fs,
+            dir,
+            ref: branchName,
+        });
+    }
 
     // Clear cache after branch deletion
     clearRepoCache(typeof dir === 'string' ? dir : undefined);
@@ -1501,12 +2303,21 @@ export const gitDeleteBranch = async (repo: Repository, branchName: string) => {
 export const gitCreateBranchAt = async (repo: Repository, branchName: string, ref: string) => {
     const { fs, dir } = getGitContext(repo);
 
-    await git.branch({
-        fs,
-        dir,
-        ref: branchName,
-        object: ref,
-    });
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['branch', branchName, ref], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to create branch: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        await git.branch({
+            fs,
+            dir,
+            ref: branchName,
+            object: ref,
+        });
+    }
 
     // Clear cache after branch creation
     clearRepoCache(typeof dir === 'string' ? dir : undefined);
@@ -1517,6 +2328,20 @@ export const gitCreateBranchAt = async (repo: Repository, branchName: string, re
  */
 export const gitAmend = async (repo: Repository, message: string, author?: { name: string, email: string }) => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            const args = ['commit', '--amend', '-m', message];
+            if (author) {
+                args.push('--author', `${author.name} <${author.email}>`);
+            }
+            gitExec(args, dir);
+        } catch (error: any) {
+            throw new Error(`Amend failed: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
 
     const commitArgs: any = {
         fs,
@@ -1610,6 +2435,17 @@ export const gitRevert = async (repo: Repository, commitRef: string, author: { n
 export const gitHasCommits = async (repo: Repository): Promise<boolean> => {
     try {
         const { fs, dir } = getGitContext(repo);
+
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && typeof dir === 'string') {
+            try {
+                gitExec(['rev-parse', 'HEAD'], dir);
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
         await git.resolveRef({ fs, dir, ref: 'HEAD' });
         return true;
     } catch {
@@ -1691,7 +2527,17 @@ export const gitStageHunk = async (
 
     // Write patched version, stage it, then restore working dir
     await fs.promises.writeFile(fullPath, patchedContent, { encoding: 'utf8' });
-    await git.add({ fs, dir, filepath });
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['add', filepath], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to stage hunk: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        await git.add({ fs, dir, filepath });
+    }
 
     // Restore working directory to original new content
     await fs.promises.writeFile(fullPath, workdirContent, { encoding: 'utf8' });
@@ -1743,7 +2589,18 @@ export const gitStageLine = async (
     const workdirContent = newContent;
 
     await fs.promises.writeFile(fullPath, resultLines.join('\n'), { encoding: 'utf8' });
-    await git.add({ fs, dir, filepath });
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['add', filepath], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to stage line: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        await git.add({ fs, dir, filepath });
+    }
+
     await fs.promises.writeFile(fullPath, workdirContent, { encoding: 'utf8' });
 };
 
@@ -1754,6 +2611,17 @@ export const gitStageLine = async (
  */
 export const gitCreateTag = async (repo: Repository, tagName: string, ref: string = 'HEAD') => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['tag', tagName, ref], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to create tag: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
+
     await git.tag({ fs, dir, ref: tagName, object: ref });
 };
 
@@ -1762,6 +2630,17 @@ export const gitCreateTag = async (repo: Repository, tagName: string, ref: strin
  */
 export const gitListTags = async (repo: Repository): Promise<string[]> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            const output = gitExec(['tag', '-l'], dir);
+            return output.trim().split('\n').filter(Boolean);
+        } catch {
+            return [];
+        }
+    }
+
     try {
         return await git.listTags({ fs, dir });
     } catch {
@@ -1775,6 +2654,28 @@ export const gitListTags = async (repo: Repository): Promise<string[]> => {
 export const gitResolveTagRefs = async (repo: Repository): Promise<Map<string, string[]>> => {
     const { fs, dir } = getGitContext(repo);
     const result = new Map<string, string[]>(); // commitOid -> tagName[]
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Get all tags with their commits
+            const output = gitExec(['tag', '-l', '--format=%(refname:short)|%(objectname:short)'], dir);
+            const lines = output.trim().split('\n').filter(Boolean);
+
+            for (const line of lines) {
+                const [tagName, commitOid] = line.split('|');
+                if (tagName && commitOid) {
+                    const existing = result.get(commitOid) || [];
+                    existing.push(tagName);
+                    result.set(commitOid, existing);
+                }
+            }
+            return result;
+        } catch {
+            return result;
+        }
+    }
+
     try {
         const tagNames = await git.listTags({ fs, dir });
         for (const tag of tagNames) {
@@ -1805,6 +2706,17 @@ export const gitResolveTagRefs = async (repo: Repository): Promise<Map<string, s
  */
 export const gitDeleteTag = async (repo: Repository, tagName: string) => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['tag', '-d', tagName], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to delete tag: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
+
     await git.deleteTag({ fs, dir, ref: tagName });
 };
 
@@ -1816,20 +2728,36 @@ export const gitDeleteTag = async (repo: Repository, tagName: string) => {
 export const gitRenameBranch = async (repo: Repository, oldName: string, newName: string) => {
     const { fs, dir } = getGitContext(repo);
 
-    // Get the commit the old branch points to
-    const oid = await git.resolveRef({ fs, dir, ref: `refs/heads/${oldName}` });
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Use git branch -m to rename
+            gitExec(['branch', '-m', oldName, newName], dir);
 
-    // Create new branch at same commit
-    await git.branch({ fs, dir, ref: newName, object: oid });
+            // If currently on the old branch, we need to update HEAD
+            const currentBranch = await getCurrentBranch(repo);
+            if (currentBranch === newName) {
+                // Already on the renamed branch, nothing to do
+            }
+        } catch (error: any) {
+            throw new Error(`Failed to rename branch: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    } else {
+        // Get the commit the old branch points to
+        const oid = await git.resolveRef({ fs, dir, ref: `refs/heads/${oldName}` });
 
-    // If currently on the old branch, checkout new one
-    const currentBranch = await getCurrentBranch(repo);
-    if (currentBranch === oldName) {
-        await git.checkout({ fs, dir, ref: newName });
+        // Create new branch at same commit
+        await git.branch({ fs, dir, ref: newName, object: oid });
+
+        // If currently on the old branch, checkout new one
+        const currentBranch = await getCurrentBranch(repo);
+        if (currentBranch === oldName) {
+            await git.checkout({ fs, dir, ref: newName });
+        }
+
+        // Delete old branch
+        await git.deleteBranch({ fs, dir, ref: oldName });
     }
-
-    // Delete old branch
-    await git.deleteBranch({ fs, dir, ref: oldName });
 
     // Clear cache after branch rename
     clearRepoCache(typeof dir === 'string' ? dir : undefined);
@@ -1846,6 +2774,35 @@ export const getAheadBehind = async (repo: Repository, branch?: string): Promise
     try {
         const currentBranch = branch || await getCurrentBranch(repo);
         if (currentBranch === 'HEAD') return { ahead: 0, behind: 0 };
+
+        // Use native git for submodules (where .git is a file, not a directory)
+        if (isNodeEnv && typeof dir === 'string') {
+            try {
+                // Check if remote tracking branch exists
+                try {
+                    gitExec(['rev-parse', `refs/remotes/origin/${currentBranch}`], dir);
+                } catch {
+                    // No remote tracking branch - count local commits
+                    try {
+                        const count = gitExec(['rev-list', '--count', currentBranch], dir).trim();
+                        return { ahead: parseInt(count, 10) || 0, behind: 0 };
+                    } catch {
+                        return { ahead: 0, behind: 0 };
+                    }
+                }
+
+                // Get ahead/behind counts using rev-list
+                const aheadOutput = gitExec(['rev-list', '--count', `${currentBranch}..origin/${currentBranch}`], dir).trim();
+                const behindOutput = gitExec(['rev-list', '--count', `origin/${currentBranch}..${currentBranch}`], dir).trim();
+
+                return {
+                    ahead: parseInt(behindOutput, 10) || 0,
+                    behind: parseInt(aheadOutput, 10) || 0
+                };
+            } catch {
+                return { ahead: 0, behind: 0 };
+            }
+        }
 
         // Resolve local and remote refs
         let localOid: string;
@@ -1906,6 +2863,38 @@ export const getAheadBehind = async (repo: Repository, branch?: string): Promise
  */
 export const fetchFileHistory = async (repo: Repository, filepath: string): Promise<Commit[]> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Use git log --follow to get file history
+            const output = gitExec(
+                ['log', '--follow', '--format=%H|%s|%an|%ai|%P', '--max-count=100', '--', filepath],
+                dir
+            );
+            const lines = output.trim().split('\n').filter(Boolean);
+
+            return lines.map((line) => {
+                const parts = line.split('|');
+                const [sha, message, author, dateStr, parentsStr] = parts;
+                const parents = parentsStr ? parentsStr.split(' ').filter(Boolean) : [];
+
+                return {
+                    id: sha,
+                    shortId: sha.substring(0, 7),
+                    message: message || '',
+                    author: author || '',
+                    date: new Date(dateStr).toISOString(),
+                    parents: parents,
+                    lane: 0,
+                    color: '#888',
+                };
+            });
+        } catch {
+            return [];
+        }
+    }
+
     try {
         const commits = await git.log({ fs, dir, ref: 'HEAD', depth: 100 });
 
@@ -1982,6 +2971,44 @@ export const fetchFileHistory = async (repo: Repository, filepath: string): Prom
 // --- Blame ---
 
 /**
+ * Check if a filepath is inside a submodule and return the submodule path
+ * Returns { submodulePath: string | null, relativePath: string }
+ * where relativePath is the path within the submodule
+ */
+const getSubmodulePathForFile = async (
+    repo: Repository,
+    filepath: string
+): Promise<{ submodulePath: string | null; relativePath: string }> => {
+    try {
+        const submodules = await listSubmodules(repo);
+        if (!submodules || submodules.length === 0) {
+            return { submodulePath: null, relativePath: filepath };
+        }
+
+        // Normalize filepath to use forward slashes
+        const normalizedPath = filepath.replace(/\\/g, '/');
+
+        // Check if filepath starts with any submodule path
+        for (const sub of submodules) {
+            const subPath = sub.path.replace(/\\/g, '/');
+            // Ensure submodule path doesn't have trailing slash for comparison
+            const subPathNormalized = subPath.endsWith('/') ? subPath.slice(0, -1) : subPath;
+
+            if (normalizedPath === subPathNormalized ||
+                normalizedPath.startsWith(subPathNormalized + '/')) {
+                // File is inside this submodule
+                const relativePath = normalizedPath.substring(subPathNormalized.length + 1);
+                return { submodulePath: sub.path, relativePath };
+            }
+        }
+
+        return { submodulePath: null, relativePath: filepath };
+    } catch {
+        return { submodulePath: null, relativePath: filepath };
+    }
+};
+
+/**
  * Get blame information for a file (simplified line attribution)
  */
 export const gitBlame = async (repo: Repository, filepath: string, ref: string = 'HEAD'): Promise<{
@@ -1989,6 +3016,92 @@ export const gitBlame = async (repo: Repository, filepath: string, ref: string =
 }> => {
     const { fs, dir } = getGitContext(repo);
 
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Check if file is inside a submodule
+            const { submodulePath, relativePath } = await getSubmodulePathForFile(repo, filepath);
+
+            let blameDir = dir;
+            let blameFilepath = filepath;
+
+            if (submodulePath) {
+                // File is in a submodule, run blame from submodule directory
+                const path = require('path');
+                blameDir = path.join(dir, submodulePath);
+                blameFilepath = relativePath;
+            }
+
+            // Use native git blame
+            // Format: SHA AUTHOR DATE LINE_CONTENT
+            const output = gitExec(['blame', ref, '--porcelain', blameFilepath], blameDir);
+            const lines = output.trim().split('\n');
+
+            const blameInfo: { content: string; commitId: string; author: string; date: string; message: string }[] = [];
+
+            // Parse porcelain format
+            // Each line starts with: <sha> <original-line> <final-line> <num-lines>
+            // Followed by header lines for that commit
+            let currentCommit: any = {};
+            let lineContent = '';
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+
+                // Check if this is a line info line (starts with SHA)
+                if (line.match(/^[0-9a-f]{40}/)) {
+                    // Previous commit info is complete, save it if we have content
+                    if (lineContent && currentCommit.sha) {
+                        blameInfo.push({
+                            content: lineContent,
+                            commitId: currentCommit.sha.substring(0, 7),
+                            author: currentCommit.author || 'Unknown',
+                            date: currentCommit.date || '',
+                            message: currentCommit.message || '',
+                        });
+                    }
+
+                    // Parse new line info
+                    const parts = line.split(' ');
+                    const sha = parts[0];
+                    lineContent = line.substring(line.indexOf('\t') + 1); // Content after tab
+
+                    // Look ahead for commit info
+                    currentCommit = { sha };
+                    let j = i + 1;
+                    while (j < lines.length && !lines[j].match(/^[0-9a-f]{40}/)) {
+                        if (lines[j].startsWith('author ')) {
+                            currentCommit.author = lines[j].substring(7);
+                        } else if (lines[j].startsWith('author-time ')) {
+                            const timestamp = parseInt(lines[j].substring(12));
+                            currentCommit.date = new Date(timestamp * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                        } else if (lines[j].startsWith('summary ')) {
+                            currentCommit.message = lines[j].substring(8);
+                        }
+                        j++;
+                    }
+                }
+            }
+
+            // Add the last line
+            if (lineContent && currentCommit.sha) {
+                blameInfo.push({
+                    content: lineContent,
+                    commitId: currentCommit.sha.substring(0, 7),
+                    author: currentCommit.author || 'Unknown',
+                    date: currentCommit.date || '',
+                    message: currentCommit.message || '',
+                });
+            }
+
+            return { lines: blameInfo };
+        } catch (error: any) {
+            console.error('Blame failed:', error);
+            return { lines: [] };
+        }
+    }
+
+    // Fallback to isomorphic-git (browser mode)
     try {
         // Resolve symbolic refs (e.g. 'HEAD') to an actual OID
         const oid = await git.resolveRef({ fs, dir, ref });
@@ -2075,6 +3188,25 @@ export const gitBlame = async (repo: Repository, filepath: string, ref: string =
 export const gitFetch = async (repo: Repository, token: string | null) => {
     const { fs, dir, http } = getGitContext(repo);
 
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            // Check if there are remotes first
+            const remotesOutput = gitExec(['remote'], dir).trim();
+            if (!remotesOutput) return;
+
+            // Fetch using native git
+            if (token) {
+                gitExecWithToken(['fetch', 'origin'], dir, token);
+            } else {
+                gitExec(['fetch', 'origin'], dir);
+            }
+        } catch (error: any) {
+            console.warn('Auto-fetch failed:', sanitizeErrorMessage(error.stderr || error.message));
+        }
+        return;
+    }
+
     try {
         const remotes = await git.listRemotes({ fs, dir });
         if (!remotes || remotes.length === 0) return;
@@ -2098,6 +3230,29 @@ export const gitFetch = async (repo: Repository, token: string | null) => {
  */
 export const gitListRemotes = async (repo: Repository): Promise<{ remote: string; url: string }[]> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            const output = gitExec(['remote', '-v'], dir);
+            const lines = output.trim().split('\n').filter(Boolean);
+            const remotes: { remote: string; url: string }[] = [];
+            const seen = new Set<string>();
+
+            for (const line of lines) {
+                // Format: origin  https://github.com/user/repo.git (fetch)
+                const match = line.match(/^(\S+)\s+(\S+)\s+\((\w+)\)$/);
+                if (match && !seen.has(match[1])) {
+                    seen.add(match[1]);
+                    remotes.push({ remote: match[1], url: match[2] });
+                }
+            }
+            return remotes;
+        } catch (error: any) {
+            throw new Error(`Failed to list remotes: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+    }
+
     return await git.listRemotes({ fs, dir });
 };
 
@@ -2146,6 +3301,17 @@ export const getGitHubInfoFromLocal = async (repo: Repository): Promise<{ owner:
  */
 export const gitAddRemote = async (repo: Repository, remoteName: string, url: string): Promise<void> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['remote', 'add', remoteName, url], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to add remote: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
+
     await git.addRemote({ fs, dir, remote: remoteName, url });
 };
 
@@ -2154,6 +3320,17 @@ export const gitAddRemote = async (repo: Repository, remoteName: string, url: st
  */
 export const gitDeleteRemote = async (repo: Repository, remoteName: string): Promise<void> => {
     const { fs, dir } = getGitContext(repo);
+
+    // Use native git for submodules (where .git is a file, not a directory)
+    if (isNodeEnv && typeof dir === 'string') {
+        try {
+            gitExec(['remote', 'remove', remoteName], dir);
+        } catch (error: any) {
+            throw new Error(`Failed to delete remote: ${sanitizeErrorMessage(error.stderr || error.message)}`);
+        }
+        return;
+    }
+
     await git.deleteRemote({ fs, dir, remote: remoteName });
 };
 

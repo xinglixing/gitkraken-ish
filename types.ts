@@ -37,6 +37,9 @@ export interface AIConfig {
   // Editor settings
   editorFontSize?: number;
   editorWordWrap?: boolean;
+
+  // Feature flags
+  enableSubmoduleFeatures?: boolean; // Enable submodule functionality (default: false)
 }
 
 export interface Profile {
@@ -119,6 +122,7 @@ export interface Repository {
   isFavorite?: boolean;
   localPath?: string; // Local file system path for cloned repos
   parent?: Repository; // Parent repository for forks
+  submodulePath?: string; // Relative path within parent (for submodule change detection)
 }
 
 export interface User {
